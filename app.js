@@ -20,7 +20,9 @@ function uid(){ return Date.now().toString(36) + Math.random().toString(36).slic
 function defaultData(){
   return {
     classe: { nom:'', niveau:'Collège', anneeScolaire:'2026-2027', matieres: DEFAULT_MATIERES.slice() },
-    eleves: []
+    eleves: [],
+    cours: [],
+    mappingTemplates: {}
   };
 }
 
@@ -31,6 +33,8 @@ function loadData(){
     const parsed = JSON.parse(raw);
     if(!parsed.classe) parsed.classe = defaultData().classe;
     if(!parsed.eleves) parsed.eleves = [];
+    if(!parsed.cours) parsed.cours = [];
+    if(!parsed.mappingTemplates) parsed.mappingTemplates = {};
     return parsed;
   }catch(e){ console.error('Erreur chargement données', e); return defaultData(); }
 }
@@ -114,6 +118,7 @@ const VIEW_META = {
   conseils:   { title:'Conseils de classe', sub:'Préparation et appréciations générales' },
   orientation:{ title:'Orientation',        sub:'Vœux, stages, affectation' },
   rdv:        { title:'Rendez-vous parents',sub:'Comptes-rendus des entretiens' },
+  cours:      { title:'Cours & activités',  sub:'Fiches et exercices à donner aux élèves' },
 };
 
 function setView(view){
@@ -139,6 +144,7 @@ function render(){
   if(state.view==='conseils') return renderConseils(c, actions);
   if(state.view==='orientation') return renderOrientation(c, actions);
   if(state.view==='rdv') return renderRdv(c, actions);
+  if(state.view==='cours') return renderCours(c, actions);
 }
 
 /* ============================================================
@@ -560,9 +566,10 @@ function renderSubRdvEleve(el, e){
    BULLETINS
    ============================================================ */
 function renderBulletins(c, actions){
-  actions.innerHTML = trimestreSwitchHTML() + `<button class="btn btn-sm" id="btn-matieres" style="margin-left:10px;">Matières</button>`;
+  actions.innerHTML = trimestreSwitchHTML() + `<button class="btn btn-sm" id="btn-import-ed" style="margin-left:10px;">Importer École Directe</button><button class="btn btn-sm" id="btn-matieres">Matières</button>`;
   bindTrimestreSwitch(actions);
   document.getElementById('btn-matieres').onclick = openSettingsModal;
+  document.getElementById('btn-import-ed').onclick = openImportWizard;
 
   const eleves = [...state.data.eleves].sort((a,b)=>(a.nom+a.prenom).localeCompare(b.nom+b.prenom));
   const matieres = state.data.classe.matieres;
@@ -581,7 +588,18 @@ function renderBulletins(c, actions){
           ${eleves.map(e=>`
             <tr data-id="${e.id}">
               <td style="position:sticky; left:0; background:var(--surface); font-weight:500;">${e.prenom} ${e.nom}</td>
-              ${matieres.map(m=>`<td><input class="note-input" data-m="${escAttr(m)}" type="text" inputmode="decimal" value="${e.bulletins?.[state.trimestre]?.[m]?.moyenne ?? ''}" placeholder="—"></td>`).join('')}
+              ${matieres.map(m=>{
+                const b = e.bulletins?.[state.trimestre]?.[m];
+                const hasAppr = b && b.appreciation;
+                return `<td>
+                  <div style="display:flex; align-items:center; gap:4px;">
+                    <input class="note-input" data-m="${escAttr(m)}" type="text" inputmode="decimal" value="${b?.moyenne ?? ''}" placeholder="—">
+                    <button class="icon-btn btn-appr-mat" data-m="${escAttr(m)}" title="Appréciation ${escAttr(m)}" style="color:${hasAppr?'var(--accent-hi)':'var(--muted-2)'};">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H8l-4 4V5Z"/></svg>
+                    </button>
+                  </div>
+                </td>`;
+              }).join('')}
               <td class="moy-cell"></td>
             </tr>
           `).join('')}
@@ -602,12 +620,296 @@ function renderBulletins(c, actions){
         updateMoyCell(tr, e);
       });
     });
+    tr.querySelectorAll('.btn-appr-mat').forEach(btn=>{
+      btn.addEventListener('click', ()=> openMatiereApprModal(e, btn.dataset.m));
+    });
   });
 }
 function updateMoyCell(tr, e){
   const moy = moyenneGenerale(e, state.trimestre);
   const cell = tr.querySelector('.moy-cell');
   cell.innerHTML = moy!==null ? `<span class="moy-badge ${moyClass(moy)}">${moy.toFixed(1)}</span>` : '<span class="muted">—</span>';
+}
+
+function openMatiereApprModal(e, matiere){
+  if(!e.bulletins[state.trimestre]) e.bulletins[state.trimestre]={};
+  if(!e.bulletins[state.trimestre][matiere]) e.bulletins[state.trimestre][matiere]={};
+  const current = e.bulletins[state.trimestre][matiere].appreciation || '';
+  showModal(`
+    <h3>Appréciation — ${escHTML(matiere)}</h3>
+    <p class="muted" style="font-size:12.5px; margin-top:-6px; margin-bottom:12px;">${e.prenom} ${e.nom} · ${state.trimestre}</p>
+    <div class="field"><textarea id="m-appr" style="min-height:110px;">${escHTML(current)}</textarea></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
+      <button class="btn btn-ghost" id="m-cancel">Annuler</button>
+      <button class="btn btn-primary" id="m-save">Enregistrer</button>
+    </div>
+  `);
+  document.getElementById('m-cancel').onclick = closeModal;
+  document.getElementById('m-save').onclick = ()=>{
+    e.bulletins[state.trimestre][matiere].appreciation = document.getElementById('m-appr').value.trim();
+    saveNow(); closeModal(); render();
+  };
+}
+
+/* ============================================================
+   IMPORT ÉCOLE DIRECTE (notes + appréciations, Excel/CSV)
+   ============================================================ */
+let importState = null;
+
+function normStr(s){
+  return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
+}
+
+function openImportWizard(){
+  if(typeof XLSX === 'undefined'){
+    alert("La librairie de lecture Excel n'a pas pu se charger (connexion internet requise). Réessaie une fois en ligne.");
+    return;
+  }
+  importState = { step:1, headers:[], rows:[], mapping:[], matches:[] };
+  renderImportPanel();
+}
+
+function importPanelShell(bodyHTML){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="import-overlay">
+      <div class="panel" style="width:min(760px,100%);">
+        <div class="panel-header">
+          <div>
+            <h2>Importer depuis École Directe</h2>
+            <div class="sub muted" style="font-size:12px; margin-top:2px;">Notes et appréciations · ${state.trimestre}</div>
+          </div>
+          <button class="icon-btn" id="btn-close-import" title="Fermer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+        <div class="panel-body">
+          <div class="import-steps">
+            ${[1,2,3,4].map(n=>`<div class="import-step-dot ${importState.step===n?'active':importState.step>n?'done':''}">${n}</div>`).join('')}
+          </div>
+          ${bodyHTML}
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('import-overlay').addEventListener('click', (ev)=>{ if(ev.target.id==='import-overlay') closeImportWizard(); });
+  document.getElementById('btn-close-import').onclick = closeImportWizard;
+}
+function closeImportWizard(){ importState=null; document.getElementById('modal-root').innerHTML=''; render(); }
+
+function renderImportPanel(){
+  if(importState.step===1) return renderImportStep1();
+  if(importState.step===2) return renderImportStep2();
+  if(importState.step===3) return renderImportStep3();
+  if(importState.step===4) return renderImportStep4();
+}
+
+function renderImportStep1(){
+  importPanelShell(`
+    <p class="muted" style="font-size:13.5px;">
+      Exporte le tableau de notes (et appréciations) depuis École Directe au format Excel (.xlsx) ou CSV, puis importe-le ici.
+      Tu pourras vérifier la correspondance des colonnes avant tout import.
+    </p>
+    <div class="field" style="margin-top:16px;">
+      <label>Fichier Excel / CSV</label>
+      <input type="file" id="import-file-input" accept=".xlsx,.xls,.csv">
+    </div>
+    <div id="import-error" style="color:var(--danger); font-size:13px; margin-top:8px;"></div>
+  `);
+  document.getElementById('import-file-input').addEventListener('change', (ev)=>{
+    const file = ev.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type:'array'});
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:''});
+        const nonEmpty = rows.filter(r=>r.some(c=>String(c).trim()!==''));
+        if(nonEmpty.length<2) throw new Error('empty');
+        importState.headers = nonEmpty[0].map(h=>String(h).trim());
+        importState.rows = nonEmpty.slice(1);
+        importState.mapping = guessMapping(importState.headers);
+        importState.step = 2;
+        renderImportPanel();
+      }catch(err){
+        document.getElementById('import-error').textContent = "Impossible de lire ce fichier. Vérifie le format (.xlsx, .xls ou .csv).";
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function mappingOptions(){
+  const matieres = state.data.classe.matieres;
+  const opts = [{v:'ignore', l:'Ignorer'}, {v:'nomcomplet', l:'Élève — nom complet'}, {v:'nom', l:'Élève — nom'}, {v:'prenom', l:'Élève — prénom'}];
+  matieres.forEach(m=> opts.push({v:'note::'+m, l:'Note — '+m}));
+  matieres.forEach(m=> opts.push({v:'appr::'+m, l:'Appréciation — '+m}));
+  opts.push({v:'apprgen', l:'Appréciation générale'});
+  return opts;
+}
+
+function guessMapping(headers){
+  const sig = headers.join('|');
+  if(state.data.mappingTemplates[sig]) return state.data.mappingTemplates[sig].slice();
+  const matieres = state.data.classe.matieres;
+  return headers.map(h=>{
+    const n = normStr(h);
+    if(['nom','nomeleve'].includes(n)) return 'nom';
+    if(['prenom'].includes(n)) return 'prenom';
+    if(['eleve','nomprenom','nometprenom','nomcomplet'].includes(n)) return 'nomcomplet';
+    if(n.includes('appreciationgenerale') || n==='apprecgenerale') return 'apprgen';
+    const matMatch = matieres.find(m=> normStr(m)===n || n.includes(normStr(m)));
+    if(matMatch){
+      if(n.includes('appreciation') || n.includes('appr')) return 'appr::'+matMatch;
+      return 'note::'+matMatch;
+    }
+    return 'ignore';
+  });
+}
+
+function renderImportStep2(){
+  const opts = mappingOptions();
+  importPanelShell(`
+    <p class="muted" style="font-size:13px; margin-bottom:12px;">
+      Indique à quoi correspond chaque colonne. Le mappage sera mémorisé pour tes prochains imports.
+    </p>
+    <div class="table-wrap" style="max-height:420px; overflow-y:auto;">
+      <table class="mapping-table">
+        <thead><tr><th>Colonne (fichier)</th><th>Aperçu</th><th>Correspond à</th></tr></thead>
+        <tbody>
+          ${importState.headers.map((h,i)=>`
+            <tr>
+              <td>${escHTML(h)||'<span class="muted">(sans nom)</span>'}</td>
+              <td class="mapping-preview">${escHTML(String(importState.rows[0]?.[i] ?? ''))}</td>
+              <td><select data-idx="${i}">${opts.map(o=>`<option value="${o.v}" ${importState.mapping[i]===o.v?'selected':''}>${o.l}</option>`).join('')}</select></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div id="mapping-warn" style="color:var(--warning); font-size:12.5px; margin-top:10px;"></div>
+    <div style="display:flex; justify-content:space-between; margin-top:18px;">
+      <button class="btn btn-ghost" id="btn-back1">← Retour</button>
+      <button class="btn btn-primary" id="btn-next2">Continuer →</button>
+    </div>
+  `);
+  document.querySelectorAll('.mapping-table select').forEach(sel=>{
+    sel.addEventListener('change', ()=>{ importState.mapping[parseInt(sel.dataset.idx)] = sel.value; });
+  });
+  document.getElementById('btn-back1').onclick = ()=>{ importState.step=1; renderImportPanel(); };
+  document.getElementById('btn-next2').onclick = ()=>{
+    const hasEleveCol = importState.mapping.some(m=>['nom','prenom','nomcomplet'].includes(m));
+    if(!hasEleveCol){ document.getElementById('mapping-warn').textContent = "Sélectionne au moins une colonne pour identifier l'élève (nom, prénom, ou nom complet)."; return; }
+    importState.matches = computeMatches();
+    importState.step = 3;
+    renderImportPanel();
+  };
+}
+
+function rowEleveName(row, mapping){
+  let nom='', prenom='', complet='';
+  mapping.forEach((m,i)=>{
+    const val = String(row[i] ?? '').trim();
+    if(m==='nom') nom = val;
+    if(m==='prenom') prenom = val;
+    if(m==='nomcomplet') complet = val;
+  });
+  return { nom, prenom, complet };
+}
+
+function computeMatches(){
+  const eleves = state.data.eleves;
+  return importState.rows.map(row=>{
+    const {nom, prenom, complet} = rowEleveName(row, importState.mapping);
+    const label = complet || `${prenom} ${nom}`.trim();
+    const target = normStr(complet || (prenom+nom));
+    let found = eleves.find(e=> normStr(e.prenom+e.nom)===target || normStr(e.nom+e.prenom)===target);
+    if(!found && target){
+      found = eleves.find(e=> target.includes(normStr(e.nom)) && target.includes(normStr(e.prenom)));
+    }
+    return { row, label: label || '(ligne sans nom)', eleveId: found ? found.id : null };
+  });
+}
+
+function renderImportStep3(){
+  const eleves = [...state.data.eleves].sort((a,b)=>(a.nom+a.prenom).localeCompare(b.nom+b.prenom));
+  const nbMatched = importState.matches.filter(m=>m.eleveId).length;
+  importPanelShell(`
+    <p class="muted" style="font-size:13px; margin-bottom:10px;">
+      ${nbMatched} / ${importState.matches.length} élève(s) reconnu(s) automatiquement. Corrige les lignes non reconnues si besoin.
+    </p>
+    <div style="max-height:420px; overflow-y:auto; border:1px solid var(--hairline); border-radius:var(--radius-m);" id="match-list"></div>
+    <div style="display:flex; justify-content:space-between; margin-top:18px;">
+      <button class="btn btn-ghost" id="btn-back2">← Retour</button>
+      <button class="btn btn-primary" id="btn-next3">Continuer →</button>
+    </div>
+  `);
+  const list = document.getElementById('match-list');
+  list.innerHTML = importState.matches.map((m,i)=>`
+    <div class="match-row ${m.eleveId?'':'no-match'}">
+      <span>${escHTML(m.label)}</span>
+      <select data-i="${i}" style="max-width:220px;">
+        <option value="">— Ignorer cette ligne —</option>
+        ${eleves.map(e=>`<option value="${e.id}" ${m.eleveId===e.id?'selected':''}>${e.prenom} ${e.nom}</option>`).join('')}
+      </select>
+    </div>
+  `).join('');
+  list.querySelectorAll('select').forEach(sel=>{
+    sel.addEventListener('change', ()=>{ importState.matches[parseInt(sel.dataset.i)].eleveId = sel.value || null; });
+  });
+  document.getElementById('btn-back2').onclick = ()=>{ importState.step=2; renderImportPanel(); };
+  document.getElementById('btn-next3').onclick = ()=>{ importState.step=4; renderImportPanel(); };
+}
+
+function renderImportStep4(){
+  const nb = importState.matches.filter(m=>m.eleveId).length;
+  const noteCount = importState.mapping.filter(m=>m.startsWith('note::')).length;
+  const apprCount = importState.mapping.filter(m=>m.startsWith('appr::')).length + importState.mapping.filter(m=>m==='apprgen').length;
+  importPanelShell(`
+    <div class="import-summary">
+      <p style="margin:0 0 8px;"><b>${nb}</b> élève(s) seront mis à jour pour <b>${state.trimestre}</b>.</p>
+      <p style="margin:0 0 8px; color:var(--muted);">${noteCount} colonne(s) de notes, ${apprCount} colonne(s) d'appréciation seront importées.</p>
+      <p style="margin:0; color:var(--muted); font-size:12px;">Les valeurs existantes seront remplacées uniquement pour les colonnes mappées. Le mappage sera mémorisé pour ce même type de fichier.</p>
+    </div>
+    <div style="display:flex; justify-content:space-between; margin-top:18px;">
+      <button class="btn btn-ghost" id="btn-back3">← Retour</button>
+      <button class="btn btn-primary" id="btn-confirm-import">Importer</button>
+    </div>
+  `);
+  document.getElementById('btn-back3').onclick = ()=>{ importState.step=3; renderImportPanel(); };
+  document.getElementById('btn-confirm-import').onclick = ()=>{
+    runImport();
+    state.data.mappingTemplates[importState.headers.join('|')] = importState.mapping.slice();
+    saveNow();
+    closeImportWizard();
+    render();
+  };
+}
+
+function runImport(){
+  const t = state.trimestre;
+  importState.matches.forEach(m=>{
+    if(!m.eleveId) return;
+    const e = getEleve(m.eleveId);
+    if(!e) return;
+    if(!e.bulletins[t]) e.bulletins[t] = {};
+    importState.mapping.forEach((map, i)=>{
+      const val = String(m.row[i] ?? '').trim();
+      if(!val) return;
+      if(map.startsWith('note::')){
+        const mat = map.slice(6);
+        if(!e.bulletins[t][mat]) e.bulletins[t][mat] = {};
+        e.bulletins[t][mat].moyenne = val.replace(',','.');
+      } else if(map.startsWith('appr::')){
+        const mat = map.slice(6);
+        if(!e.bulletins[t][mat]) e.bulletins[t][mat] = {};
+        e.bulletins[t][mat].appreciation = val;
+      } else if(map==='apprgen'){
+        e.bulletins[t].appreciationGenerale = val;
+      }
+    });
+  });
 }
 
 /* ============================================================
@@ -684,6 +986,13 @@ function generateAppreciation(e){
   } else {
     phrases.push("Assiduité sans reproche ce trimestre.");
   }
+
+  const matieres = state.data.classe.matieres;
+  const points = matieres.filter(m=>{ const v = moyenneMatiere(e, state.trimestre, m); return v!==null && v>=16; });
+  const difficultes = matieres.filter(m=>{ const v = moyenneMatiere(e, state.trimestre, m); return v!==null && v<8; });
+  if(points.length) phrases.push(`Résultats remarquables en ${points.join(', ')}.`);
+  if(difficultes.length) phrases.push(`Des difficultés importantes sont à noter en ${difficultes.join(', ')}.`);
+
   return phrases.join(' ');
 }
 
@@ -870,6 +1179,275 @@ function openRdvModal(eleve, onDone){
     if(onDone) onDone();
     if(state.currentEleveId===e.id) renderEleveSubtab(e);
   };
+}
+
+/* ============================================================
+   COURS & ACTIVITÉS
+   ============================================================ */
+let coursFilter = 'tous';
+
+function newCoursItem(){
+  return { id:uid(), titre:'', categorie:'eps', type:'mixte', datePublication:todayISO(), consignes:'', contenu:'', questions:[] };
+}
+
+function renderCours(c, actions){
+  actions.innerHTML = `<button class="btn btn-primary" id="btn-add-cours">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+    Nouvel item</button>`;
+  document.getElementById('btn-add-cours').onclick = ()=> openCoursEditor(newCoursItem(), true);
+
+  const items = [...state.data.cours].sort((a,b)=> (b.datePublication||'').localeCompare(a.datePublication||''));
+  const filtered = coursFilter==='tous' ? items : items.filter(i=>i.categorie===coursFilter);
+
+  c.innerHTML = `
+    <div class="ai-generate-box">
+      <div class="ai-text"><b>Générer un item avec l'IA</b>Décris un thème, l'IA rédige une fiche ou un exercice adapté à tes 6èmes que tu pourras relire et modifier.</div>
+      <button class="btn btn-ai" id="btn-ai-open">✨ Générer</button>
+    </div>
+    <div class="cours-filters">
+      <button data-f="tous" class="${coursFilter==='tous'?'active':''}">Tous (${items.length})</button>
+      <button data-f="eps" class="${coursFilter==='eps'?'active':''}">EPS (${items.filter(i=>i.categorie==='eps').length})</button>
+      <button data-f="vdc" class="${coursFilter==='vdc'?'active':''}">Vie de classe (${items.filter(i=>i.categorie==='vdc').length})</button>
+    </div>
+    <div id="cours-grid"></div>
+  `;
+  document.getElementById('btn-ai-open').onclick = openAIGenerateModal;
+  c.querySelectorAll('.cours-filters button').forEach(b=>{
+    b.onclick = ()=>{ coursFilter = b.dataset.f; renderCours(c, actions); };
+  });
+  const grid = document.getElementById('cours-grid');
+  if(!filtered.length){
+    grid.innerHTML = `<div class="empty-state"><h3>Aucun item</h3><p>Crée une fiche manuellement ou génère-en une avec l'IA.</p></div>`;
+    return;
+  }
+  grid.innerHTML = `<div class="cours-grid">${filtered.map(coursCardHTML).join('')}</div>`;
+  grid.querySelectorAll('.cours-card').forEach(card=>{
+    card.onclick = ()=> openCoursEditor(state.data.cours.find(i=>i.id===card.dataset.id), false);
+  });
+}
+
+function coursCardHTML(item){
+  const catLabel = item.categorie==='eps' ? 'EPS' : 'Vie de classe';
+  const excerpt = (item.consignes || item.contenu || '').slice(0,110);
+  return `
+    <div class="cours-card" data-id="${item.id}">
+      <div class="cc-top">
+        <div class="cc-title">${escHTML(item.titre) || '(sans titre)'}</div>
+        <span class="chip ${item.categorie==='eps'?'eps':'vdc'}">${catLabel}</span>
+      </div>
+      <div class="cc-meta">${fmtDate(item.datePublication)} · ${item.questions?.length||0} question(s)</div>
+      <div class="cc-excerpt">${escHTML(excerpt)}${excerpt.length>=110?'…':''}</div>
+    </div>`;
+}
+
+function openAIGenerateModal(){
+  showModal(`
+    <h3>Générer avec l'IA</h3>
+    <div class="field"><label>Thème / sujet</label><input id="ai-theme" placeholder="ex. les fondamentaux du basket-ball, l'organisation du cartable…" autofocus></div>
+    <div class="field-row">
+      <div class="field"><label>Catégorie</label>
+        <select id="ai-cat"><option value="eps">EPS</option><option value="vdc">Vie de classe</option></select>
+      </div>
+      <div class="field"><label>Type</label>
+        <select id="ai-type">
+          <option value="fiche">Fiche / consignes</option>
+          <option value="exercice">Exercice (questions)</option>
+          <option value="mixte">Mélange</option>
+        </select>
+      </div>
+    </div>
+    <div class="field"><label>Précisions (optionnel)</label><textarea id="ai-details" placeholder="Contraintes, durée, matériel, objectif particulier…"></textarea></div>
+    <div id="ai-error" style="color:var(--danger); font-size:12.5px; margin-top:4px;"></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">
+      <button class="btn btn-ghost" id="m-cancel">Annuler</button>
+      <button class="btn btn-ai" id="m-generate">✨ Générer</button>
+    </div>
+  `);
+  document.getElementById('m-cancel').onclick = closeModal;
+  document.getElementById('m-generate').onclick = async ()=>{
+    const theme = document.getElementById('ai-theme').value.trim();
+    if(!theme){ document.getElementById('ai-error').textContent = 'Indique un thème.'; return; }
+    const cat = document.getElementById('ai-cat').value;
+    const type = document.getElementById('ai-type').value;
+    const details = document.getElementById('ai-details').value.trim();
+    const btn = document.getElementById('m-generate');
+    btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> Génération…`;
+    document.getElementById('ai-error').textContent = '';
+    try{
+      const item = await generateCoursWithAI({theme, cat, type, details});
+      closeModal();
+      openCoursEditor(item, true);
+    }catch(err){
+      console.error(err);
+      document.getElementById('ai-error').textContent = "La génération a échoué. Réessaie, ou crée l'item manuellement.";
+      btn.disabled = false; btn.innerHTML = '✨ Générer';
+    }
+  };
+}
+
+async function generateCoursWithAI({theme, cat, type, details}){
+  const catLabel = cat==='eps' ? "une activité/séquence d'EPS (éducation physique et sportive)" : "un support de vie de classe (méthodologie, organisation, règles de vie, projet de professeur principal)";
+  const typeInstruction = {
+    fiche: "Privilégie des consignes claires, peu ou pas de questions.",
+    exercice: "Inclus plusieurs questions ou tâches précises que l'élève doit réaliser.",
+    mixte: "Mélange des consignes et quelques questions ou tâches."
+  }[type];
+  const system = `Tu rédiges du contenu pédagogique pour un professeur principal de 6ème (élèves de 11-12 ans) en collège en France. Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant ni après, sans balises markdown ni bloc de code. Clés attendues : "titre" (string court), "consignes" (string, 2-4 phrases), "contenu" (string, le corps de la fiche, paragraphes séparés par des sauts de ligne), "questions" (tableau de strings, peut être vide). Langue simple, adaptée à des élèves de 6ème.`;
+  const user = `Sujet : ${theme}\nType de contenu à produire : ${catLabel}.\n${typeInstruction}${details ? '\nPrécisions du professeur : '+details : ''}`;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens:1000,
+      system,
+      messages:[{ role:'user', content:user }]
+    })
+  });
+  const data = await response.json();
+  const textBlock = (data.content||[]).find(b=>b.type==='text');
+  if(!textBlock) throw new Error('no text');
+  const clean = textBlock.text.replace(/```json|```/g,'').trim();
+  const parsed = JSON.parse(clean);
+  const item = newCoursItem();
+  item.titre = parsed.titre || theme;
+  item.categorie = cat;
+  item.type = type;
+  item.consignes = parsed.consignes || '';
+  item.contenu = parsed.contenu || '';
+  item.questions = (parsed.questions||[]).map(q=>({id:uid(), enonce: typeof q==='string'?q:String(q)}));
+  return item;
+}
+
+function openCoursEditor(item, isNew){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="cours-overlay">
+      <div class="panel">
+        <div class="panel-header">
+          <div><h2>${isNew ? 'Nouvel item' : (item.titre || 'Item')}</h2><div class="sub muted" style="font-size:12px; margin-top:2px;">Cours &amp; activités</div></div>
+          <div style="display:flex; gap:6px;">
+            <button class="icon-btn" id="btn-print-cours" title="Imprimer / aperçu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-2M6 14h12v7H6v-7Z"/></svg>
+            </button>
+            ${!isNew ? `<button class="icon-btn" id="btn-del-cours" title="Supprimer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-8 0 1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"/></svg></button>` : ''}
+            <button class="icon-btn" id="btn-close-cours" title="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="field-row">
+            <div class="field"><label>Titre</label><input id="cf-titre" value="${escAttr(item.titre)}" placeholder="Titre de la fiche / activité"></div>
+            <div class="field"><label>Date</label><input id="cf-date" type="date" value="${item.datePublication||todayISO()}"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Catégorie</label>
+              <select id="cf-cat"><option value="eps" ${item.categorie==='eps'?'selected':''}>EPS</option><option value="vdc" ${item.categorie==='vdc'?'selected':''}>Vie de classe</option></select>
+            </div>
+            <div class="field"><label>Type</label>
+              <select id="cf-type">
+                <option value="fiche" ${item.type==='fiche'?'selected':''}>Fiche / consignes</option>
+                <option value="exercice" ${item.type==='exercice'?'selected':''}>Exercice (questions)</option>
+                <option value="document" ${item.type==='document'?'selected':''}>Document</option>
+                <option value="mixte" ${item.type==='mixte'?'selected':''}>Mélange</option>
+              </select>
+            </div>
+          </div>
+          <div class="field"><label>Consignes</label><textarea id="cf-consignes" placeholder="Ce que l'élève doit faire…">${escHTML(item.consignes)}</textarea></div>
+          <div class="field"><label>Contenu</label><textarea id="cf-contenu" style="min-height:140px;" placeholder="Corps de la fiche / activité…">${escHTML(item.contenu)}</textarea></div>
+          <div class="divider"></div>
+          <div class="flex-between"><div class="section-title" style="margin:0;">Questions / tâches</div><button class="btn btn-sm" id="btn-add-q">+ Question</button></div>
+          <div id="q-list" style="margin-top:10px;"></div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">
+            <button class="btn btn-ghost" id="btn-cancel-cours">Annuler</button>
+            <button class="btn btn-primary" id="btn-save-cours">Enregistrer</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  let questions = (item.questions||[]).map(q=>({...q}));
+  function renderQ(){
+    const list = document.getElementById('q-list');
+    if(!questions.length){ list.innerHTML = `<p class="muted" style="font-size:13px;">Aucune question.</p>`; return; }
+    list.innerHTML = questions.map((q,i)=>`
+      <div class="question-row" data-id="${q.id}">
+        <span class="muted" style="font-family:var(--font-mono); font-size:12px; padding-top:10px;">${i+1}.</span>
+        <textarea data-qid="${q.id}">${escHTML(q.enonce)}</textarea>
+        <button class="icon-btn btn-del-q" data-id="${q.id}" style="margin-top:8px;">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+    `).join('');
+    list.querySelectorAll('textarea[data-qid]').forEach(ta=>{
+      ta.addEventListener('input', ()=>{ const q = questions.find(x=>x.id===ta.dataset.qid); q.enonce = ta.value; });
+    });
+    list.querySelectorAll('.btn-del-q').forEach(b=>{
+      b.onclick = ()=>{ questions = questions.filter(q=>q.id!==b.dataset.id); renderQ(); };
+    });
+  }
+  renderQ();
+  document.getElementById('btn-add-q').onclick = ()=>{ questions.push({id:uid(), enonce:''}); renderQ(); };
+
+  document.getElementById('cours-overlay').addEventListener('click', (ev)=>{ if(ev.target.id==='cours-overlay') closeCoursEditor(); });
+  document.getElementById('btn-close-cours').onclick = closeCoursEditor;
+  document.getElementById('btn-cancel-cours').onclick = closeCoursEditor;
+  if(!isNew){
+    document.getElementById('btn-del-cours').onclick = ()=>{
+      confirmModal(`Supprimer « ${item.titre||'cet item'} » ?`, ()=>{
+        state.data.cours = state.data.cours.filter(i=>i.id!==item.id);
+        saveNow(); closeCoursEditor();
+      });
+    };
+  }
+  document.getElementById('btn-print-cours').onclick = ()=>{
+    const draft = {
+      ...item,
+      titre: document.getElementById('cf-titre').value,
+      consignes: document.getElementById('cf-consignes').value,
+      contenu: document.getElementById('cf-contenu').value,
+      questions,
+    };
+    printCoursItem(draft);
+  };
+  document.getElementById('btn-save-cours').onclick = ()=>{
+    item.titre = document.getElementById('cf-titre').value.trim();
+    item.datePublication = document.getElementById('cf-date').value || todayISO();
+    item.categorie = document.getElementById('cf-cat').value;
+    item.type = document.getElementById('cf-type').value;
+    item.consignes = document.getElementById('cf-consignes').value.trim();
+    item.contenu = document.getElementById('cf-contenu').value.trim();
+    item.questions = questions.filter(q=>q.enonce.trim());
+    if(isNew) state.data.cours.push(item);
+    saveNow(); closeCoursEditor();
+  };
+}
+function closeCoursEditor(){ document.getElementById('modal-root').innerHTML=''; render(); }
+
+function printCoursItem(item){
+  const win = window.open('', '_blank');
+  if(!win) return;
+  const catLabel = item.categorie==='eps' ? 'EPS' : 'Vie de classe';
+  win.document.write(`
+    <html><head><meta charset="utf-8"><title>${escHTML(item.titre)}</title>
+    <style>
+      body{ font-family: Georgia, serif; max-width:720px; margin:40px auto; color:#111; line-height:1.6; }
+      h1{ font-size:22px; margin-bottom:4px; }
+      .meta{ font-size:12px; color:#555; margin-bottom:24px; }
+      .block{ margin-bottom:18px; font-size:14px; white-space:pre-wrap; }
+      ol{ padding-left:20px; }
+      li{ margin-bottom:8px; }
+    </style></head><body>
+      <h1>${escHTML(item.titre||'Sans titre')}</h1>
+      <div class="meta">${catLabel} · ${fmtDate(item.datePublication)}${state.data.classe.nom ? ' · '+escHTML(state.data.classe.nom) : ''}</div>
+      ${item.consignes ? `<div class="block"><b>Consignes</b><br>${escHTML(item.consignes)}</div>` : ''}
+      ${item.contenu ? `<div class="block">${escHTML(item.contenu)}</div>` : ''}
+      ${item.questions && item.questions.length ? `<div class="block"><b>Questions</b><ol>${item.questions.map(q=>`<li>${escHTML(q.enonce)}</li>`).join('')}</ol></div>` : ''}
+    </body></html>
+  `);
+  win.document.close();
+  win.focus();
+  setTimeout(()=> win.print(), 300);
 }
 
 /* ============================================================
