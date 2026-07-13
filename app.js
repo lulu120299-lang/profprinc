@@ -1560,14 +1560,13 @@ function init(){
   document.querySelector('.class-pill').style.cursor = 'pointer';
   setView('accueil');
 
+  // Service worker désactivé temporairement : il causait un affichage périmé
+  // (ancienne version de l'app mise en cache). On désinscrit toute version
+  // déjà installée pour forcer un chargement frais à chaque visite.
   if('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js').catch(()=>{});
-    let reloaded = false;
-    navigator.serviceWorker.addEventListener('controllerchange', ()=>{
-      if(reloaded) return;
-      reloaded = true;
-      window.location.reload();
-    });
+    navigator.serviceWorker.getRegistrations().then(regs=>{
+      regs.forEach(r=> r.unregister());
+    }).catch(()=>{});
   }
 }
 document.addEventListener('DOMContentLoaded', init);
