@@ -94,6 +94,7 @@ function loadData(){
     if(!parsed.eleves) parsed.eleves = [];
     if(!parsed.cours) parsed.cours = [];
     if(!parsed.mappingTemplates) parsed.mappingTemplates = {};
+    parsed.eleves.forEach(e=>{ if(!e.dispositifs) e.dispositifs = []; });
     return parsed;
   }catch(e){ console.error('Erreur chargement données', e); return defaultData(); }
 }
@@ -137,6 +138,7 @@ function newEleve(nom, prenom){
     contacts: [],
     viescolaire: [],
     absences: [],
+    dispositifs: [],
     bulletins: { T1:{}, T2:{}, T3:{} },
     orientation: { voeux: [], stages: [], notesOrientation:'' },
     rdv: []
@@ -271,6 +273,35 @@ function bindBackupBanner(){
   };
 }
 
+function classAverageByTrimestre(eleves){
+  return TRIMESTRES.map(t=>{
+    const vals = eleves.map(e=>moyenneGenerale(e, t)).filter(v=>v!==null);
+    return { t, val: vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null, n: vals.length };
+  });
+}
+
+function classAverageChartHTML(eleves){
+  if(!eleves.length) return '';
+  const data = classAverageByTrimestre(eleves);
+  if(!data.some(d=>d.val!==null)) return '';
+  const max = 20;
+  return `
+    <div class="stat-card" style="margin-top:16px;">
+      <div class="label" style="margin-bottom:14px;">Évolution de la moyenne de classe</div>
+      <div class="chart-bars">
+        ${data.map(d=>{
+          const pct = d.val!==null ? Math.max(4, (d.val/max)*100) : 0;
+          return `
+            <div class="chart-bar-col">
+              <div class="chart-bar-value">${d.val!==null ? d.val.toFixed(1) : '—'}</div>
+              <div class="chart-bar-track"><div class="chart-bar-fill ${d.t===state.trimestre?'current':''}" style="height:${pct}%;"></div></div>
+              <div class="chart-bar-label">${d.t}${d.n ? ` (${d.n})` : ''}</div>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
 function renderAccueil(c, actions){
   const eleves = state.data.eleves;
   const nbAlertes = eleves.filter(e=>alerteLevel(e)==='alerte').length;
@@ -324,6 +355,8 @@ function renderAccueil(c, actions){
       </div>
     </div>
 
+    ${classAverageChartHTML(eleves)}
+
     <div class="section-title" style="margin-top:26px;">Élèves à surveiller — ${state.trimestre}</div>
     <div class="eleves-list" id="acc-alertes"></div>
   `;
@@ -354,6 +387,10 @@ function eleveCardHTML(e, lvl){
   const abs = absencesNonJustifiees(e);
   const inc = incidentsCount(e);
   const tags = [];
+  if(e.dispositifs && e.dispositifs.length){
+    const types = [...new Set(e.dispositifs.map(d=>d.type))];
+    tags.push(`<span class="tag" style="background:var(--accent-soft); color:var(--accent-hi);">${types.join(', ')}</span>`);
+  }
   if(moy!==null) tags.push(`<span class="tag ${moy<10?'danger':moy<12?'warning':'success'}">moy. ${moy.toFixed(1)}</span>`);
   if(abs>0) tags.push(`<span class="tag ${abs>=4?'danger':'warning'}">${abs} abs. non just.</span>`);
   if(inc>0) tags.push(`<span class="tag danger">${inc} incident${inc>1?'s':''}</span>`);
@@ -449,7 +486,7 @@ function renderElevePanel(){
         </div>
         <div class="panel-body">
           <div class="subtabs">
-            ${subtab('infos','Infos')}${subtab('viescolaire','Vie scolaire')}${subtab('absences','Absences')}${subtab('orientation','Orientation')}${subtab('rdv','Rendez-vous')}
+            ${subtab('infos','Infos')}${subtab('dispositifs','Dispositifs')}${subtab('viescolaire','Vie scolaire')}${subtab('absences','Absences')}${subtab('orientation','Orientation')}${subtab('rdv','Rendez-vous')}${subtab('courriers','Courriers')}
           </div>
           <div id="eleve-subtab-content"></div>
         </div>
@@ -476,10 +513,12 @@ function closePanel(){ state.currentEleveId=null; document.getElementById('modal
 function renderEleveSubtab(e){
   const el = document.getElementById('eleve-subtab-content');
   if(state.eleveSubtab==='infos') return renderSubInfos(el, e);
+  if(state.eleveSubtab==='dispositifs') return renderSubDispositifs(el, e);
   if(state.eleveSubtab==='viescolaire') return renderSubViescolaire(el, e);
   if(state.eleveSubtab==='absences') return renderSubAbsences(el, e);
   if(state.eleveSubtab==='orientation') return renderSubOrientationEleve(el, e);
   if(state.eleveSubtab==='rdv') return renderSubRdvEleve(el, e);
+  if(state.eleveSubtab==='courriers') return renderSubCourriers(el, e);
 }
 
 /* --- Infos --- */
@@ -662,6 +701,121 @@ function openAbsenceModal(e){
     if(!e.absences) e.absences=[];
     e.absences.push({id:uid(), date:document.getElementById('m-date').value||todayISO(), duree:document.getElementById('m-duree').value, motif:document.getElementById('m-motif').value.trim(), justifie:document.getElementById('m-justifie').checked});
     saveNow(); closeModal(); renderEleveSubtab(e);
+  };
+}
+
+/* --- Dispositifs (PAP / PPRE / PAI) --- */
+const DISPOSITIF_TYPES = ['PAP','PPRE','PAI','Autre'];
+function renderSubDispositifs(el, e){
+  el.innerHTML = `
+    <div class="flex-between">
+      <div class="section-title" style="margin:0;">Dispositifs d'accompagnement</div>
+      <button class="btn btn-sm btn-primary" id="btn-add-disp">+ Ajouter</button>
+    </div>
+    <p class="muted" style="font-size:12.5px; margin-top:6px;">PAP, PPRE, PAI et autres aménagements suivis pour cet élève.</p>
+    <div id="disp-list" style="margin-top:12px;"></div>
+  `;
+  document.getElementById('btn-add-disp').onclick = ()=> openDispositifModal(e);
+  const list = document.getElementById('disp-list');
+  const items = [...(e.dispositifs||[])].sort((a,b)=> (b.dateDebut||'').localeCompare(a.dateDebut||''));
+  if(!items.length){ list.innerHTML = `<p class="muted" style="font-size:13px;">Aucun dispositif enregistré.</p>`; return; }
+  list.innerHTML = items.map(d=>`
+    <div class="entry-row">
+      <div class="entry-top">
+        <span class="tag warning">${escHTML(d.type)}</span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span class="entry-date">${d.dateDebut ? 'depuis le '+fmtDate(d.dateDebut) : ''}${d.dateRenouvellement ? ' · renouvellement '+fmtDate(d.dateRenouvellement) : ''}</span>
+          <button class="icon-btn btn-del-disp" data-id="${d.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-8 0 1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"/></svg></button>
+        </div>
+      </div>
+      ${d.mesures ? `<p><b>Aménagements :</b> ${escHTML(d.mesures)}</p>` : ''}
+      ${d.remarques ? `<p>${escHTML(d.remarques)}</p>` : ''}
+    </div>
+  `).join('');
+  list.querySelectorAll('.btn-del-disp').forEach(b=>{
+    b.onclick = ()=>{ e.dispositifs = e.dispositifs.filter(d=>d.id!==b.dataset.id); saveNow(); renderSubDispositifs(el,e); };
+  });
+}
+function openDispositifModal(e){
+  showModal(`
+    <h3>Nouveau dispositif</h3>
+    <div class="field"><label>Type</label>
+      <select id="m-type">${DISPOSITIF_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Date de mise en place</label><input id="m-debut" type="date" value="${todayISO()}"></div>
+      <div class="field"><label>Renouvellement / échéance</label><input id="m-renouv" type="date"></div>
+    </div>
+    <div class="field"><label>Aménagements prévus</label><textarea id="m-mesures" placeholder="Tiers-temps, tolérance orthographique, place adaptée…"></textarea></div>
+    <div class="field"><label>Remarques</label><textarea id="m-remarques" placeholder="Contexte, suivi médical/MDPH, contact référent…"></textarea></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
+      <button class="btn btn-ghost" id="m-cancel">Annuler</button>
+      <button class="btn btn-primary" id="m-save">Enregistrer</button>
+    </div>
+  `);
+  document.getElementById('m-cancel').onclick = closeModal;
+  document.getElementById('m-save').onclick = ()=>{
+    if(!e.dispositifs) e.dispositifs=[];
+    e.dispositifs.push({
+      id: uid(),
+      type: document.getElementById('m-type').value,
+      dateDebut: document.getElementById('m-debut').value,
+      dateRenouvellement: document.getElementById('m-renouv').value,
+      mesures: document.getElementById('m-mesures').value.trim(),
+      remarques: document.getElementById('m-remarques').value.trim(),
+    });
+    saveNow(); closeModal(); renderEleveSubtab(e);
+  };
+}
+
+/* --- Courriers aux familles --- */
+const COURRIER_TEMPLATES = [
+  { key:'absences', label:'Absences répétées',
+    build:(e,ct)=> `Madame, Monsieur,\n\nJe me permets de vous contacter en tant que professeur principal de ${e.prenom} ${e.nom}.\nJ'ai constaté plusieurs absences ces dernières semaines et souhaitais faire le point avec vous à ce sujet.\n\nPourriez-vous me confirmer les motifs de ces absences, et me préciser si un rendez-vous serait utile pour en discuter ?\n\nJe reste à votre disposition.\n\nCordialement,` },
+  { key:'miseengarde', label:'Mise en garde comportement',
+    build:(e,ct)=> `Madame, Monsieur,\n\nEn tant que professeur principal de ${e.prenom} ${e.nom}, je me permets de vous alerter sur des difficultés de comportement observées récemment en classe.\n\nJe souhaiterais échanger avec vous afin de trouver ensemble des solutions et d'accompagner au mieux ${e.prenom} dans la suite de l'année.\n\nN'hésitez pas à me contacter pour convenir d'un moment d'échange.\n\nCordialement,` },
+  { key:'convocation', label:'Convocation rendez-vous',
+    build:(e,ct)=> `Madame, Monsieur,\n\nJe souhaiterais vous rencontrer afin de faire le point sur la scolarité de ${e.prenom} ${e.nom}.\n\nSeriez-vous disponible prochainement ? Merci de me indiquer vos disponibilités afin que nous puissions convenir d'un rendez-vous.\n\nCordialement,` },
+  { key:'felicitations', label:'Félicitations / encouragements',
+    build:(e,ct)=> `Madame, Monsieur,\n\nJe tenais à vous faire part de ma satisfaction concernant le travail et l'attitude de ${e.prenom} ${e.nom} ce trimestre.\n\nCes efforts sont à souligner et à encourager. Merci de votre soutien dans son travail.\n\nCordialement,` },
+  { key:'vierge', label:'Courrier libre (vierge)',
+    build:(e,ct)=> `Madame, Monsieur,\n\nConcernant ${e.prenom} ${e.nom} :\n\n\n\nCordialement,` },
+];
+function renderSubCourriers(el, e){
+  const contacts = e.contacts||[];
+  el.innerHTML = `
+    <div class="section-title" style="margin:0 0 10px;">Modèle de courrier</div>
+    <div class="field"><select id="courrier-template">${COURRIER_TEMPLATES.map(t=>`<option value="${t.key}">${t.label}</option>`).join('')}</select></div>
+    ${contacts.length ? `<div class="field"><label>Destinataire</label><select id="courrier-contact"><option value="">— Choisir un contact —</option>${contacts.map(c=>`<option value="${c.id}">${escHTML(c.nom)} (${escHTML(c.lien)})${c.mail?' — '+escHTML(c.mail):''}</option>`).join('')}</select></div>` : `<p class="muted" style="font-size:12.5px;">Aucun contact enregistré dans l'onglet Infos — tu pourras copier le texte manuellement.</p>`}
+    <div class="appreciation-box" style="margin-top:6px;">
+      <textarea id="courrier-texte" style="min-height:220px;"></textarea>
+    </div>
+    <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
+      <button class="btn btn-sm" id="btn-courrier-copy">Copier le texte</button>
+      <button class="btn btn-sm btn-primary" id="btn-courrier-mail">Ouvrir dans Mail</button>
+    </div>
+  `;
+  function fillTemplate(){
+    const key = document.getElementById('courrier-template').value;
+    const tpl = COURRIER_TEMPLATES.find(t=>t.key===key);
+    document.getElementById('courrier-texte').value = tpl.build(e);
+  }
+  fillTemplate();
+  document.getElementById('courrier-template').addEventListener('change', fillTemplate);
+  document.getElementById('btn-courrier-copy').onclick = ()=>{
+    const ta = document.getElementById('courrier-texte');
+    ta.select();
+    try{ document.execCommand('copy'); }catch(err){}
+    if(navigator.clipboard) navigator.clipboard.writeText(ta.value).catch(()=>{});
+  };
+  document.getElementById('btn-courrier-mail').onclick = ()=>{
+    const contactSel = document.getElementById('courrier-contact');
+    const contact = contactSel ? contacts.find(c=>c.id===contactSel.value) : null;
+    const to = contact && contact.mail ? contact.mail : '';
+    const templateKey = document.getElementById('courrier-template').value;
+    const subject = 'Concernant ' + e.prenom + ' ' + e.nom;
+    const body = document.getElementById('courrier-texte').value;
+    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
 }
 
@@ -1040,8 +1194,9 @@ function runImport(){
    ============================================================ */
 let conseilIndex = 0;
 function renderConseils(c, actions){
-  actions.innerHTML = trimestreSwitchHTML();
+  actions.innerHTML = trimestreSwitchHTML() + `<button class="btn btn-sm" id="btn-presentation" style="margin-left:10px;">⛶ Plein écran</button>`;
   bindTrimestreSwitch(actions);
+  document.getElementById('btn-presentation').onclick = enterPresentationMode;
   const eleves = [...state.data.eleves].sort((a,b)=>(a.nom+a.prenom).localeCompare(b.nom+b.prenom));
   if(!eleves.length){ c.innerHTML = `<div class="empty-state"><h3>Aucun élève</h3><p>Ajoute des élèves pour préparer le conseil de classe.</p></div>`; return; }
   if(conseilIndex>=eleves.length) conseilIndex=0;
@@ -1052,6 +1207,7 @@ function renderConseils(c, actions){
   const positifs = (e.viescolaire||[]).filter(v=>v.type==='positif').length;
 
   c.innerHTML = `
+    ${document.body.classList.contains('presentation-mode') ? `<button class="presentation-exit" id="btn-exit-presentation">✕ Quitter le plein écran</button>` : ''}
     <div class="conseil-nav">
       <button class="btn btn-ghost" id="c-prev">← Précédent</button>
       <span class="conseil-progress">${conseilIndex+1} / ${eleves.length} — ${state.trimestre}</span>
@@ -1078,12 +1234,35 @@ function renderConseils(c, actions){
   `;
   document.getElementById('c-prev').onclick = ()=>{ conseilIndex = (conseilIndex-1+eleves.length)%eleves.length; renderConseils(c,actions); };
   document.getElementById('c-next').onclick = ()=>{ conseilIndex = (conseilIndex+1)%eleves.length; renderConseils(c,actions); };
+  const exitBtn = document.getElementById('btn-exit-presentation');
+  if(exitBtn) exitBtn.onclick = exitPresentationMode;
   const ta = document.getElementById('appreciation-txt');
   if(!e.bulletins[state.trimestre]) e.bulletins[state.trimestre]={};
   if(e.bulletins[state.trimestre].appreciationGenerale===undefined){ e.bulletins[state.trimestre].appreciationGenerale = ta.value; saveData(); }
   ta.addEventListener('input', ()=>{ e.bulletins[state.trimestre].appreciationGenerale = ta.value; saveData(); });
   document.getElementById('btn-regen').onclick = ()=>{ ta.value = generateAppreciation(e); e.bulletins[state.trimestre].appreciationGenerale = ta.value; saveNow(); };
 }
+
+function enterPresentationMode(){
+  document.body.classList.add('presentation-mode');
+  if(document.documentElement.requestFullscreen){
+    document.documentElement.requestFullscreen().catch(()=>{});
+  }
+  render();
+}
+function exitPresentationMode(){
+  document.body.classList.remove('presentation-mode');
+  if(document.fullscreenElement && document.exitFullscreen){
+    document.exitFullscreen().catch(()=>{});
+  }
+  render();
+}
+document.addEventListener('keydown', (ev)=>{
+  if(ev.key==='Escape' && document.body.classList.contains('presentation-mode')) exitPresentationMode();
+});
+document.addEventListener('fullscreenchange', ()=>{
+  if(!document.fullscreenElement && document.body.classList.contains('presentation-mode')) exitPresentationMode();
+});
 
 function generateAppreciation(e){
   const moy = moyenneGenerale(e, state.trimestre);
