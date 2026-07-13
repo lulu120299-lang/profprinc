@@ -7,6 +7,65 @@ const STORAGE_KEY = 'suivipp-data-v1';
 const TRIMESTRES = ['T1', 'T2', 'T3'];
 const DEFAULT_MATIERES = ['Français','Mathématiques','Histoire-Géo-EMC','Anglais','LV2','SVT','Physique-Chimie','Technologie','EPS','Arts plastiques','Éducation musicale'];
 
+const SUGGESTED_VDC = [
+  { titre:"Jeux de connaissance et cohésion de groupe",
+    consignes:"Séance d'accueil en début d'année pour que les élèves apprennent à se connaître et se sentent à l'aise dans leur nouvelle classe.",
+    contenu:"Le collège change complètement les repères des élèves de 6e : nouveaux camarades, nouveaux professeurs, nouveaux lieux. Cette première heure de vie de classe sert à créer un climat de confiance avant d'aborder des sujets plus sérieux. Elle peut prendre la forme de jeux courts (bingo des prénoms, marché des compétences, points communs) suivis d'un temps d'échange libre sur les impressions de rentrée.",
+    questions:["Qu'est-ce qui te plaît le plus dans le collège pour l'instant ?","Qu'est-ce qui t'inquiète ou te surprend ?","Trouve un point commun avec trois camarades que tu ne connaissais pas avant."] },
+  { titre:"Découverte du collège : fonctionnement et adultes-ressources",
+    consignes:"Présenter aux élèves les différents lieux et adultes du collège, et vers qui se tourner selon les situations.",
+    contenu:"Contrairement à l'école primaire, un élève de 6e croise chaque jour de nombreux adultes aux rôles différents : professeurs, CPE, assistants d'éducation, infirmière, documentaliste, agents. Cette séance clarifie qui fait quoi et dédramatise le fait d'aller voir un adulte en cas de problème. Un plan du collège ou un trombinoscope facilite la mémorisation.",
+    questions:["À qui t'adresses-tu si tu as un souci avec un camarade ?","À qui t'adresses-tu si tu es malade pendant la journée ?","Où se trouvent la vie scolaire, le CDI, l'infirmerie ?"] },
+  { titre:"Le cartable et l'emploi du temps",
+    consignes:"Aider les élèves à organiser matériellement leur semaine de collège.",
+    contenu:"Beaucoup d'élèves de 6e arrivent avec un cartable trop lourd ou mal préparé, faute d'avoir intégré la logique de l'emploi du temps. La séance propose une méthode simple : préparer son sac la veille en suivant l'emploi du temps du lendemain, trier les classeurs par matière, vérifier le poids du sac. On peut prolonger avec une réflexion sur le rythme de la semaine (travail, loisirs, sommeil).",
+    questions:["Prépares-tu ton sac le soir ou le matin ? Pourquoi ?","Combien de temps consacres-tu à tes devoirs chaque soir ?","Quel jour ton sac est-il le plus lourd ? Comment l'alléger ?"] },
+  { titre:"Méthodologie : cahier, classeur, agenda, apprendre une leçon",
+    consignes:"Donner des repères concrets pour tenir ses cahiers et apprendre efficacement une leçon.",
+    contenu:"La méthodologie de travail est rarement enseignée explicitement alors qu'elle conditionne la réussite scolaire. Cette séance aborde la tenue propre des cahiers et classeurs, l'usage de l'agenda pour anticiper les devoirs, et une méthode simple pour apprendre une leçon (lire, reformuler, se tester). Elle peut s'appuyer sur des exemples concrets apportés par les élèves.",
+    questions:["Comment t'y prends-tu pour apprendre une leçon par cœur ?","Utilises-tu ton agenda tous les jours ? Pour quoi faire ?","Que fais-tu si tu ne comprends pas un cours ?"] },
+  { titre:"Élection des délégués : rôle, droits, devoirs",
+    consignes:"Préparer et organiser l'élection des délégués de classe.",
+    contenu:"Le délégué de classe représente ses camarades auprès de l'administration et participe au conseil de classe. Cette séance explique le rôle, les qualités attendues (écoute, discrétion, sens des responsabilités) et le déroulement du vote. Les candidats peuvent préparer une courte présentation avant l'élection à bulletin secret.",
+    questions:["Quelles qualités un bon délégué doit-il avoir selon toi ?","Que peut faire un délégué si un camarade rencontre une difficulté ?","Souhaites-tu te présenter ? Pourquoi ?"] },
+  { titre:"Fonctionnement du collège : notes, bulletins, conseil de classe",
+    consignes:"Expliquer le système de notation et le déroulement d'un conseil de classe.",
+    contenu:"Le passage au collège introduit des notions nouvelles pour les élèves de 6e : moyennes par matière, bulletins trimestriels, conseil de classe. Cette séance démystifie ces mécanismes en expliquant qui participe au conseil de classe, ce qui s'y décide, et le rôle du professeur principal dans la rédaction de l'appréciation générale.",
+    questions:["Qui participe à un conseil de classe ?","Que se passe-t-il si tes résultats baissent d'un trimestre à l'autre ?","Pourquoi les délégués participent-ils au conseil de classe ?"] },
+  { titre:"Règlement intérieur et sanctions",
+    consignes:"Faire comprendre le sens des règles du collège, pas seulement les lister.",
+    contenu:"Plutôt que de relire le règlement intérieur intégralement, cette séance fait réfléchir les élèves sur le pourquoi des règles : vivre ensemble suppose des limites communes. On peut partir de situations concrètes (retard, oubli de matériel, insultes) et faire discuter les élèves sur les conséquences possibles, avant de présenter l'échelle des sanctions du collège.",
+    questions:["Pourquoi existe-t-il un règlement intérieur ?","Que se passe-t-il si une règle est ignorée plusieurs fois ?","Quelle règle te semble la plus importante à respecter ?"] },
+  { titre:"Respect et harcèlement : repérer, réagir, en parler",
+    consignes:"Sensibiliser au harcèlement scolaire et au cyberharcèlement, sans stigmatiser.",
+    contenu:"Le harcèlement touche une part significative des élèves de 6e, période de transition propice aux tensions de groupe. Cette séance vise à définir clairement ce qu'est le harcèlement (répétition, intention de nuire, déséquilibre de pouvoir), à distinguer une moquerie isolée d'un harcèlement, et à donner des réflexes clairs : en parler à un adulte, ne pas rester spectateur passif. Elle peut s'appuyer sur les supports du programme pHARe (numéro 3018).",
+    questions:["Quelle différence fais-tu entre une dispute et du harcèlement ?","Que peux-tu faire si tu es témoin d'une situation de harcèlement ?","Connais-tu un numéro ou un adulte à qui en parler ?"] },
+  { titre:"Usage des écrans et réseaux sociaux",
+    consignes:"Faire réfléchir les élèves à un usage raisonné des écrans et réseaux sociaux.",
+    contenu:"De nombreux élèves de 6e possèdent déjà un smartphone et accèdent à des réseaux sociaux dont l'âge minimum légal (13 ans) n'est souvent pas respecté. Cette séance aborde le temps d'écran, les traces laissées en ligne, et les risques (contacts inconnus, contenus inadaptés, cyberharcèlement) sans diaboliser les usages numériques.",
+    questions:["Combien de temps passes-tu sur les écrans en dehors de l'école ?","Que ferais-tu si un inconnu te contactait sur un réseau social ?","Une information partagée en ligne peut-elle être supprimée facilement ?"] },
+  { titre:"Bilan à mi-année : la roue de la satisfaction",
+    consignes:"Faire un point individuel et collectif sur le ressenti des élèves à mi-parcours.",
+    contenu:"Cet outil simple consiste à faire colorier aux élèves une roue divisée en plusieurs domaines (résultats, ambiance de classe, relations avec les professeurs, vie au collège) selon une note sur 10. Le but n'est pas de comparer les élèves entre eux mais de leur donner un support pour verbaliser leur ressenti et suivre son évolution au fil de l'année.",
+    questions:["Quel domaine de ta roue est le mieux coloré ? Pourquoi ?","Quel domaine aimerais-tu améliorer d'ici la fin d'année ?","Qu'est-ce qui t'aiderait à progresser sur ce point ?"] },
+  { titre:"Préparation du conseil de classe",
+    consignes:"Préparer collectivement ce que les délégués vont porter au conseil de classe.",
+    contenu:"Avant chaque conseil de classe, un temps collectif permet aux délégués de recueillir l'avis de la classe : ce qui fonctionne bien, ce qui pose problème, les suggestions d'amélioration. Cette séance structure cet échange pour que les délégués puissent porter une parole représentative et constructive devant les professeurs.",
+    questions:["Qu'est-ce qui s'est bien passé ce trimestre dans la classe ?","Qu'est-ce qui pourrait être amélioré ?","Quel message précis les délégués doivent-ils porter au conseil ?"] },
+  { titre:"Découverte des métiers et premiers repères d'orientation",
+    consignes:"Initier une première réflexion sur les métiers et les parcours possibles.",
+    contenu:"Il est tôt pour parler d'orientation en 6e, mais c'est le bon moment pour élargir la culture des métiers et déconstruire certains stéréotypes (métiers « de filles »/« de garçons »). La séance peut s'appuyer sur les métiers des proches des élèves, un jeu d'association matières-métiers, ou une courte vidéo de présentation de métiers variés.",
+    questions:["Quel métier exercent tes parents ou proches ? En quoi consiste-t-il ?","Quelle matière préfères-tu ? À quels métiers pourrait-elle être utile ?","Un métier peut-il être fait aussi bien par un homme que par une femme ? Donne un exemple."] },
+  { titre:"Sécurité routière et gestes de premiers secours",
+    consignes:"Sensibiliser aux règles de sécurité sur le trajet domicile-collège et aux gestes de premiers secours.",
+    contenu:"De nombreux élèves de 6e commencent à se déplacer seuls (à pied, à vélo, en bus). Cette séance rappelle les règles de sécurité routière de base et peut être complétée par une initiation aux gestes qui sauvent (alerter, protéger, position latérale de sécurité) en lien avec l'infirmière scolaire ou les pompiers.",
+    questions:["Comment te rends-tu au collège ? Quels dangers rencontres-tu sur le trajet ?","Que fais-tu si tu es témoin d'un accident ?","Connais-tu le numéro des secours ?"] },
+  { titre:"Bilan de fin d'année et projection vers la 5e",
+    consignes:"Faire un bilan de l'année de 6e et se projeter positivement vers la 5e.",
+    contenu:"Cette dernière séance de l'année permet de revenir sur le chemin parcouru depuis la rentrée : ce qui a été difficile, ce qui a été appris, ce qui a changé. Elle prépare aussi les élèves au changement d'organisation en 5e (nouvelle langue vivante, éventuellement de nouveaux professeurs) pour aborder la suite sereinement.",
+    questions:["Qu'as-tu appris cette année qui ne concerne pas une matière scolaire ?","Qu'est-ce qui a été le plus difficile pour toi en 6e ?","Qu'attends-tu de la 5e ?"] },
+];
+
 let state = {
   view: 'accueil',
   trimestre: 'T1',
@@ -1191,10 +1250,13 @@ function newCoursItem(){
 }
 
 function renderCours(c, actions){
-  actions.innerHTML = `<button class="btn btn-primary" id="btn-add-cours">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-    Nouvel item</button>`;
+  actions.innerHTML = `
+    <button class="btn btn-sm" id="btn-suggest-vdc">📋 Thèmes vie de classe 6e</button>
+    <button class="btn btn-primary" id="btn-add-cours" style="margin-left:8px;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+      Nouvel item</button>`;
   document.getElementById('btn-add-cours').onclick = ()=> openCoursEditor(newCoursItem(), true);
+  document.getElementById('btn-suggest-vdc').onclick = openSuggestedVdcModal;
 
   const items = [...state.data.cours].sort((a,b)=> (b.datePublication||'').localeCompare(a.datePublication||''));
   const filtered = coursFilter==='tous' ? items : items.filter(i=>i.categorie===coursFilter);
@@ -1238,6 +1300,42 @@ function coursCardHTML(item){
       <div class="cc-meta">${fmtDate(item.datePublication)} · ${item.questions?.length||0} question(s)</div>
       <div class="cc-excerpt">${escHTML(excerpt)}${excerpt.length>=110?'…':''}</div>
     </div>`;
+}
+
+function openSuggestedVdcModal(){
+  const existingTitles = new Set(state.data.cours.map(i=>normStr(i.titre)));
+  showModal(`
+    <h3>Thèmes vie de classe — 6e</h3>
+    <p class="muted" style="font-size:12.5px; margin-top:-6px; margin-bottom:12px;">Séances prêtes à l'emploi (consignes, contenu, questions), à ajuster ensuite.</p>
+    <div style="max-height:340px; overflow-y:auto; border:1px solid var(--hairline); border-radius:var(--radius-m); padding:4px 10px;">
+      ${SUGGESTED_VDC.map((s,i)=>{
+        const already = existingTitles.has(normStr(s.titre));
+        return `<label style="display:flex; align-items:flex-start; gap:8px; padding:8px 2px; font-size:13px; ${already?'opacity:.5;':''}">
+          <input type="checkbox" data-i="${i}" ${already?'disabled':'checked'} style="width:auto; margin-top:3px;">
+          <span>${escHTML(s.titre)}${already?' <span class="muted">(déjà ajouté)</span>':''}</span>
+        </label>`;
+      }).join('')}
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+      <button class="btn btn-ghost" id="m-cancel">Annuler</button>
+      <button class="btn btn-primary" id="m-add">Ajouter la sélection</button>
+    </div>
+  `);
+  document.getElementById('m-cancel').onclick = closeModal;
+  document.getElementById('m-add').onclick = ()=>{
+    const checked = [...document.querySelectorAll('[data-i]:checked')].map(el=>SUGGESTED_VDC[parseInt(el.dataset.i)]);
+    checked.forEach(s=>{
+      const item = newCoursItem();
+      item.titre = s.titre;
+      item.categorie = 'vdc';
+      item.type = 'mixte';
+      item.consignes = s.consignes;
+      item.contenu = s.contenu;
+      item.questions = s.questions.map(q=>({id:uid(), enonce:q}));
+      state.data.cours.push(item);
+    });
+    saveNow(); closeModal(); render();
+  };
 }
 
 function openAIGenerateModal(){
