@@ -1562,6 +1562,12 @@ function init(){
 
   if('serviceWorker' in navigator){
     navigator.serviceWorker.register('sw.js').catch(()=>{});
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+      if(reloaded) return;
+      reloaded = true;
+      window.location.reload();
+    });
   }
 }
 document.addEventListener('DOMContentLoaded', init);

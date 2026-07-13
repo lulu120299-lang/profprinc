@@ -1,4 +1,4 @@
-const CACHE_NAME = 'suivi-pp-v1';
+const CACHE_NAME = 'suivi-pp-v2';
 const ASSETS = ['./index.html', './style.css', './app.js', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', (e)=>{
@@ -13,18 +13,26 @@ self.addEventListener('activate', (e)=>{
   self.clients.claim();
 });
 
+/* Réseau en priorité pour l'app (HTML/CSS/JS) : garantit que la dernière version
+   déployée s'affiche toujours quand il y a du réseau. Le cache ne sert que de
+   secours hors-ligne. */
 self.addEventListener('fetch', (e)=>{
   if(e.request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(e.request).then(cached=>{
-      const fetchPromise = fetch(e.request).then(resp=>{
+  const isAppFile = ASSETS.some(a => e.request.url.endsWith(a.replace('./','/')) || e.request.url.endsWith(a.replace('./','')));
+  if(isAppFile || e.request.mode === 'navigate'){
+    e.respondWith(
+      fetch(e.request).then(resp=>{
         if(resp && resp.status===200){
           const clone = resp.clone();
           caches.open(CACHE_NAME).then(cache=>cache.put(e.request, clone));
         }
         return resp;
-      }).catch(()=>cached);
-      return cached || fetchPromise;
-    })
+      }).catch(()=> caches.match(e.request))
+    );
+    return;
+  }
+  // Autres ressources (polices, libs externes) : cache d'abord, réseau en secours
+  e.respondWith(
+    caches.match(e.request).then(cached=> cached || fetch(e.request))
   );
 });
