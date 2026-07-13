@@ -302,6 +302,31 @@ function classAverageChartHTML(eleves){
     </div>`;
 }
 
+function dispositifsRenouvellementHTML(eleves){
+  const rows = [];
+  eleves.forEach(e=>{
+    (e.dispositifs||[]).forEach(d=>{
+      const j = daysUntil(d.dateRenouvellement);
+      if(j!==null && j<=45) rows.push({e, d, j});
+    });
+  });
+  if(!rows.length) return '';
+  rows.sort((a,b)=> a.j - b.j);
+  return `
+    <div class="section-title" style="margin-top:26px;">Renouvellements de dispositifs à venir</div>
+    <div class="eleves-list" id="acc-disp-renouv">
+      ${rows.map(({e,d,j})=>`
+        <div class="eleve-card ${j<0?'alerte':'attention'}" data-id="${e.id}">
+          <div class="eleve-avatar">${initiales(e)}</div>
+          <div>
+            <div class="eleve-name">${e.prenom} ${e.nom} — ${escHTML(d.type)}</div>
+            <div class="eleve-meta">${j<0 ? `Renouvellement dépassé de ${Math.abs(j)} j` : `Dans ${j} j`} · ${fmtDate(d.dateRenouvellement)}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
 function renderAccueil(c, actions){
   const eleves = state.data.eleves;
   const nbAlertes = eleves.filter(e=>alerteLevel(e)==='alerte').length;
@@ -356,6 +381,7 @@ function renderAccueil(c, actions){
     </div>
 
     ${classAverageChartHTML(eleves)}
+    ${dispositifsRenouvellementHTML(eleves)}
 
     <div class="section-title" style="margin-top:26px;">Élèves à surveiller — ${state.trimestre}</div>
     <div class="eleves-list" id="acc-alertes"></div>
@@ -376,6 +402,12 @@ function renderAccueil(c, actions){
     });
   }
   bindBackupBanner();
+  const renouvWrap = document.getElementById('acc-disp-renouv');
+  if(renouvWrap){
+    renouvWrap.querySelectorAll('.eleve-card').forEach(card=>{
+      card.onclick = ()=> openEleveFiche(card.dataset.id);
+    });
+  }
 
   const tsw = trimestreSwitchHTML();
   actions.innerHTML = tsw;
@@ -389,7 +421,8 @@ function eleveCardHTML(e, lvl){
   const tags = [];
   if(e.dispositifs && e.dispositifs.length){
     const types = [...new Set(e.dispositifs.map(d=>d.type))];
-    tags.push(`<span class="tag" style="background:var(--accent-soft); color:var(--accent-hi);">${types.join(', ')}</span>`);
+    const urgent = e.dispositifs.some(d=>{ const j = daysUntil(d.dateRenouvellement); return j!==null && j<=45; });
+    tags.push(`<span class="tag ${urgent?'danger':''}" style="${urgent?'':'background:var(--accent-soft); color:var(--accent-hi);'}">${types.join(', ')}</span>`);
   }
   if(moy!==null) tags.push(`<span class="tag ${moy<10?'danger':moy<12?'warning':'success'}">moy. ${moy.toFixed(1)}</span>`);
   if(abs>0) tags.push(`<span class="tag ${abs>=4?'danger':'warning'}">${abs} abs. non just.</span>`);
@@ -704,67 +737,131 @@ function openAbsenceModal(e){
   };
 }
 
-/* --- Dispositifs (PAP / PPRE / PAI) --- */
-const DISPOSITIF_TYPES = ['PAP','PPRE','PAI','Autre'];
+/* --- Dispositifs (PAP / PPRE / PAI / PPS / ULIS / AESH) --- */
+const DISPOSITIF_TYPES = ['PAP','PPRE','PAI','PPS','ULIS','Aide humaine (AESH)','Autre'];
+
+function daysUntil(iso){
+  if(!iso) return null;
+  const d = new Date(iso);
+  if(isNaN(d)) return null;
+  return Math.round((d.getTime() - Date.now()) / 86400000);
+}
+
+function newDispositif(){
+  return { id:uid(), type:'PAP', referent:'', besoins:'', dateDebut:todayISO(), dateRenouvellement:'',
+    mesures:'', aesh:false, aeshNom:'', aeshQuotite:'', protocoleUrgence:'', remarques:'', suivi:[] };
+}
+
 function renderSubDispositifs(el, e){
   el.innerHTML = `
     <div class="flex-between">
       <div class="section-title" style="margin:0;">Dispositifs d'accompagnement</div>
       <button class="btn btn-sm btn-primary" id="btn-add-disp">+ Ajouter</button>
     </div>
-    <p class="muted" style="font-size:12.5px; margin-top:6px;">PAP, PPRE, PAI et autres aménagements suivis pour cet élève.</p>
+    <p class="muted" style="font-size:12.5px; margin-top:6px;">PAP, PPRE, PAI, PPS/ULIS, aide humaine (AESH) et autres mesures suivies pour cet élève.</p>
     <div id="disp-list" style="margin-top:12px;"></div>
   `;
-  document.getElementById('btn-add-disp').onclick = ()=> openDispositifModal(e);
+  document.getElementById('btn-add-disp').onclick = ()=>{
+    if(!e.dispositifs) e.dispositifs=[];
+    e.dispositifs.push(newDispositif());
+    saveNow(); renderSubDispositifs(el, e);
+  };
   const list = document.getElementById('disp-list');
   const items = [...(e.dispositifs||[])].sort((a,b)=> (b.dateDebut||'').localeCompare(a.dateDebut||''));
   if(!items.length){ list.innerHTML = `<p class="muted" style="font-size:13px;">Aucun dispositif enregistré.</p>`; return; }
-  list.innerHTML = items.map(d=>`
-    <div class="entry-row">
-      <div class="entry-top">
-        <span class="tag warning">${escHTML(d.type)}</span>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span class="entry-date">${d.dateDebut ? 'depuis le '+fmtDate(d.dateDebut) : ''}${d.dateRenouvellement ? ' · renouvellement '+fmtDate(d.dateRenouvellement) : ''}</span>
-          <button class="icon-btn btn-del-disp" data-id="${d.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-8 0 1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"/></svg></button>
-        </div>
-      </div>
-      ${d.mesures ? `<p><b>Aménagements :</b> ${escHTML(d.mesures)}</p>` : ''}
-      ${d.remarques ? `<p>${escHTML(d.remarques)}</p>` : ''}
-    </div>
-  `).join('');
-  list.querySelectorAll('.btn-del-disp').forEach(b=>{
-    b.onclick = ()=>{ e.dispositifs = e.dispositifs.filter(d=>d.id!==b.dataset.id); saveNow(); renderSubDispositifs(el,e); };
-  });
+  list.innerHTML = items.map(d=> dispositifCardHTML(d)).join('');
+  items.forEach(d=> bindDispositifCard(list, e, d, el));
 }
-function openDispositifModal(e){
-  showModal(`
-    <h3>Nouveau dispositif</h3>
-    <div class="field"><label>Type</label>
-      <select id="m-type">${DISPOSITIF_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select>
+
+function dispositifCardHTML(d){
+  const j = daysUntil(d.dateRenouvellement);
+  let renouvBadge = '';
+  if(j!==null){
+    if(j<0) renouvBadge = `<span class="tag danger">Renouvellement dépassé</span>`;
+    else if(j<=45) renouvBadge = `<span class="tag warning">Renouvellement dans ${j} j</span>`;
+  }
+  return `
+    <div class="entry-row disp-card" data-did="${d.id}" style="margin-bottom:12px;">
+      <div class="entry-top" style="margin-bottom:10px;">
+        <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+          <select data-df="type" style="width:auto; padding:4px 8px; font-size:12px;">${DISPOSITIF_TYPES.map(t=>`<option value="${t}" ${d.type===t?'selected':''}>${t}</option>`).join('')}</select>
+          ${renouvBadge}
+        </div>
+        <button class="icon-btn btn-del-disp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-8 0 1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"/></svg></button>
+      </div>
+      <div class="field-row">
+        <div class="field" style="margin-bottom:8px;"><label>Référent / suivi</label><input data-df="referent" placeholder="Psy EN, médecin scolaire, enseignant référent ASH…" value="${escAttr(d.referent)}"></div>
+        <div class="field" style="margin-bottom:8px;"><label>Besoins / troubles concernés</label><input data-df="besoins" placeholder="Dys, TDAH, allergie, trouble anxieux…" value="${escAttr(d.besoins)}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field" style="margin-bottom:8px;"><label>Date de mise en place</label><input data-df="dateDebut" type="date" value="${d.dateDebut||''}"></div>
+        <div class="field" style="margin-bottom:8px;"><label>Renouvellement / révision</label><input data-df="dateRenouvellement" type="date" value="${d.dateRenouvellement||''}"></div>
+      </div>
+      <div class="field" style="margin-bottom:8px;"><label>Aménagements et mesures</label><textarea data-df="mesures" placeholder="Tiers-temps, adaptation des supports, tolérance orthographique, place adaptée…">${escHTML(d.mesures)}</textarea></div>
+      <div class="field" style="margin-bottom:8px; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" data-df="aesh" id="aesh-${d.id}" style="width:auto;" ${d.aesh?'checked':''}>
+        <label for="aesh-${d.id}" style="margin:0;">Accompagnement humain (AESH/AVS)</label>
+      </div>
+      <div class="field-row aesh-fields" data-aesh-fields style="${d.aesh?'':'display:none;'}">
+        <div class="field" style="margin-bottom:8px;"><label>Nom de l'AESH</label><input data-df="aeshNom" value="${escAttr(d.aeshNom)}"></div>
+        <div class="field" style="margin-bottom:8px;"><label>Quotité horaire</label><input data-df="aeshQuotite" placeholder="ex. 12h/semaine, mutualisé…" value="${escAttr(d.aeshQuotite)}"></div>
+      </div>
+      <div class="field" style="margin-bottom:8px;"><label>Protocole / consignes particulières (urgence, PAI…)</label><textarea data-df="protocoleUrgence" placeholder="Conduite à tenir, trousse d'urgence, personnes à prévenir…">${escHTML(d.protocoleUrgence)}</textarea></div>
+      <div class="field" style="margin-bottom:4px;"><label>Remarques</label><textarea data-df="remarques">${escHTML(d.remarques)}</textarea></div>
+      <div class="divider"></div>
+      <div class="flex-between">
+        <span class="muted" style="font-size:12px;">Journal de suivi</span>
+        <button class="btn btn-sm btn-add-suivi">+ Note</button>
+      </div>
+      <div class="suivi-list" style="margin-top:8px;">
+        ${(d.suivi||[]).slice().sort((a,b)=>b.date.localeCompare(a.date)).map(s=>`
+          <div class="entry-row" style="background:var(--surface); padding:8px 10px;">
+            <div class="entry-top"><span class="entry-date">${fmtDate(s.date)}</span><button class="icon-btn btn-del-suivi" data-sid="${s.id}"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+            <p style="font-size:12.5px;">${escHTML(s.texte)}</p>
+          </div>`).join('') || `<p class="muted" style="font-size:12.5px;">Aucune note de suivi.</p>`}
+      </div>
     </div>
-    <div class="field-row">
-      <div class="field"><label>Date de mise en place</label><input id="m-debut" type="date" value="${todayISO()}"></div>
-      <div class="field"><label>Renouvellement / échéance</label><input id="m-renouv" type="date"></div>
-    </div>
-    <div class="field"><label>Aménagements prévus</label><textarea id="m-mesures" placeholder="Tiers-temps, tolérance orthographique, place adaptée…"></textarea></div>
-    <div class="field"><label>Remarques</label><textarea id="m-remarques" placeholder="Contexte, suivi médical/MDPH, contact référent…"></textarea></div>
-    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
-      <button class="btn btn-ghost" id="m-cancel">Annuler</button>
-      <button class="btn btn-primary" id="m-save">Enregistrer</button>
-    </div>
-  `);
-  document.getElementById('m-cancel').onclick = closeModal;
-  document.getElementById('m-save').onclick = ()=>{
-    if(!e.dispositifs) e.dispositifs=[];
-    e.dispositifs.push({
-      id: uid(),
-      type: document.getElementById('m-type').value,
-      dateDebut: document.getElementById('m-debut').value,
-      dateRenouvellement: document.getElementById('m-renouv').value,
-      mesures: document.getElementById('m-mesures').value.trim(),
-      remarques: document.getElementById('m-remarques').value.trim(),
+  `;
+}
+
+function bindDispositifCard(list, e, d, el){
+  const card = list.querySelector(`.disp-card[data-did="${d.id}"]`);
+  if(!card) return;
+  card.querySelectorAll('[data-df]').forEach(input=>{
+    const field = input.dataset.df;
+    const evt = (input.type==='checkbox' || input.tagName==='SELECT') ? 'change' : 'input';
+    input.addEventListener(evt, ()=>{
+      d[field] = input.type==='checkbox' ? input.checked : input.value;
+      if(field==='aesh'){
+        card.querySelector('[data-aesh-fields]').style.display = d.aesh ? '' : 'none';
+      }
+      saveData();
     });
-    saveNow(); closeModal(); renderEleveSubtab(e);
+  });
+  card.querySelector('.btn-del-disp').onclick = ()=>{
+    confirmModal('Supprimer ce dispositif ?', ()=>{
+      e.dispositifs = e.dispositifs.filter(x=>x.id!==d.id);
+      saveNow(); renderSubDispositifs(el, e);
+    });
+  };
+  card.querySelector('.btn-add-suivi').onclick = ()=>{
+    showModal(`
+      <h3>Note de suivi</h3>
+      <div class="field"><label>Date</label><input id="m-date" type="date" value="${todayISO()}"></div>
+      <div class="field"><label>Note</label><textarea id="m-texte" placeholder="Évolution, échange avec la famille, bilan d'étape…"></textarea></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
+        <button class="btn btn-ghost" id="m-cancel">Annuler</button>
+        <button class="btn btn-primary" id="m-save">Ajouter</button>
+      </div>
+    `);
+    document.getElementById('m-cancel').onclick = closeModal;
+    document.getElementById('m-save').onclick = ()=>{
+      const texte = document.getElementById('m-texte').value.trim();
+      if(!texte) return;
+      if(!d.suivi) d.suivi=[];
+      d.suivi.push({id:uid(), date:document.getElementById('m-date').value||todayISO(), texte});
+      saveNow(); closeModal(); renderSubDispositifs(el, e);
+    };
   };
 }
 
