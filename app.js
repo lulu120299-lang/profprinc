@@ -100,15 +100,33 @@ function loadData(){
 
 let saveTimer = null;
 function saveData(){
+  updateSaveStatus('saving');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(()=>{
-    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data)); }
-    catch(e){ console.error('Erreur sauvegarde', e); }
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data)); updateSaveStatus('saved'); }
+    catch(e){ console.error('Erreur sauvegarde', e); updateSaveStatus('error'); }
   }, 350);
 }
 function saveNow(){
   clearTimeout(saveTimer);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+    updateSaveStatus('saved');
+  }catch(e){ console.error('Erreur sauvegarde', e); updateSaveStatus('error'); }
+}
+function updateSaveStatus(mode){
+  const el = document.getElementById('save-status');
+  if(!el) return;
+  el.classList.remove('saving');
+  if(mode==='saving'){
+    el.classList.add('saving');
+    el.textContent = 'Enregistrement…';
+  } else if(mode==='error'){
+    el.textContent = "Échec de l'enregistrement";
+  } else {
+    const now = new Date();
+    el.textContent = 'Enregistré à ' + now.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+  }
 }
 
 function getEleve(id){ return state.data.eleves.find(e=>e.id===id); }
@@ -209,6 +227,50 @@ function render(){
 /* ============================================================
    ACCUEIL
    ============================================================ */
+/* ============================================================
+   RAPPEL DE SAUVEGARDE
+   Les données ne vivent que dans le navigateur (localStorage) : on
+   rappelle régulièrement d'exporter un fichier de sauvegarde.
+   ============================================================ */
+const LAST_EXPORT_KEY = 'suivipp-last-export';
+const BACKUP_SNOOZE_KEY = 'suivipp-backup-snooze';
+
+function daysSince(iso){
+  if(!iso) return Infinity;
+  const d = new Date(iso);
+  if(isNaN(d)) return Infinity;
+  return (Date.now() - d.getTime()) / 86400000;
+}
+
+function shouldShowBackupBanner(){
+  if(!state.data.eleves.length) return false;
+  const snoozeUntil = localStorage.getItem(BACKUP_SNOOZE_KEY);
+  if(snoozeUntil && new Date(snoozeUntil) > new Date()) return false;
+  return daysSince(localStorage.getItem(LAST_EXPORT_KEY)) >= 14;
+}
+
+function backupBannerHTML(){
+  const lastExport = localStorage.getItem(LAST_EXPORT_KEY);
+  const msg = lastExport ? `Dernière sauvegarde le ${fmtDate(lastExport)}.` : "Tu n'as encore jamais exporté de sauvegarde.";
+  return `
+    <div class="backup-banner" id="backup-banner">
+      <div><b>Pense à sauvegarder tes données.</b> ${msg} Elles ne vivent que sur cet appareil/navigateur : un export régulier évite de tout perdre.</div>
+      <div class="bb-actions">
+        <button class="btn btn-sm btn-primary" id="bb-export">Exporter maintenant</button>
+        <button class="btn btn-sm btn-ghost" id="bb-snooze">Plus tard</button>
+      </div>
+    </div>`;
+}
+function bindBackupBanner(){
+  const exp = document.getElementById('bb-export');
+  const snz = document.getElementById('bb-snooze');
+  if(exp) exp.onclick = openExportModal;
+  if(snz) snz.onclick = ()=>{
+    localStorage.setItem(BACKUP_SNOOZE_KEY, new Date(Date.now()+3*86400000).toISOString());
+    const b = document.getElementById('backup-banner'); if(b) b.remove();
+  };
+}
+
 function renderAccueil(c, actions){
   const eleves = state.data.eleves;
   const nbAlertes = eleves.filter(e=>alerteLevel(e)==='alerte').length;
@@ -233,6 +295,7 @@ function renderAccueil(c, actions){
   }
 
   c.innerHTML = `
+    ${shouldShowBackupBanner() ? backupBannerHTML() : ''}
     <div class="grid-cards">
       <div class="stat-card">
         <div class="label">Effectif</div>
@@ -279,6 +342,7 @@ function renderAccueil(c, actions){
       card.onclick = ()=> openEleveFiche(card.dataset.id);
     });
   }
+  bindBackupBanner();
 
   const tsw = trimestreSwitchHTML();
   actions.innerHTML = tsw;
@@ -1243,10 +1307,8 @@ function openRdvModal(eleve, onDone){
 /* ============================================================
    COURS & ACTIVITÉS
    ============================================================ */
-let coursFilter = 'tous';
-
 function newCoursItem(){
-  return { id:uid(), titre:'', categorie:'eps', type:'mixte', datePublication:todayISO(), consignes:'', contenu:'', questions:[] };
+  return { id:uid(), titre:'', categorie:'vdc', type:'mixte', datePublication:todayISO(), consignes:'', contenu:'', questions:[] };
 }
 
 function renderCours(c, actions){
@@ -1259,43 +1321,34 @@ function renderCours(c, actions){
   document.getElementById('btn-suggest-vdc').onclick = openSuggestedVdcModal;
 
   const items = [...state.data.cours].sort((a,b)=> (b.datePublication||'').localeCompare(a.datePublication||''));
-  const filtered = coursFilter==='tous' ? items : items.filter(i=>i.categorie===coursFilter);
 
   c.innerHTML = `
     <div class="ai-generate-box">
-      <div class="ai-text"><b>Générer un item avec l'IA</b>Décris un thème, l'IA rédige une fiche ou un exercice adapté à tes 6èmes que tu pourras relire et modifier.</div>
+      <div class="ai-text"><b>Générer un item avec l'IA</b>Décris un thème, l'IA rédige une fiche ou un exercice de vie de classe adapté à tes 6èmes que tu pourras relire et modifier.</div>
       <button class="btn btn-ai" id="btn-ai-open">✨ Générer</button>
-    </div>
-    <div class="cours-filters">
-      <button data-f="tous" class="${coursFilter==='tous'?'active':''}">Tous (${items.length})</button>
-      <button data-f="eps" class="${coursFilter==='eps'?'active':''}">EPS (${items.filter(i=>i.categorie==='eps').length})</button>
-      <button data-f="vdc" class="${coursFilter==='vdc'?'active':''}">Vie de classe (${items.filter(i=>i.categorie==='vdc').length})</button>
     </div>
     <div id="cours-grid"></div>
   `;
   document.getElementById('btn-ai-open').onclick = openAIGenerateModal;
-  c.querySelectorAll('.cours-filters button').forEach(b=>{
-    b.onclick = ()=>{ coursFilter = b.dataset.f; renderCours(c, actions); };
-  });
   const grid = document.getElementById('cours-grid');
-  if(!filtered.length){
-    grid.innerHTML = `<div class="empty-state"><h3>Aucun item</h3><p>Crée une fiche manuellement ou génère-en une avec l'IA.</p></div>`;
+  if(!items.length){
+    grid.innerHTML = `<div class="empty-state"><h3>Aucun item</h3><p>Crée une fiche manuellement, pioche dans les thèmes suggérés, ou génère-en une avec l'IA.</p></div>`;
     return;
   }
-  grid.innerHTML = `<div class="cours-grid">${filtered.map(coursCardHTML).join('')}</div>`;
+  grid.innerHTML = `<div class="cours-grid">${items.map(coursCardHTML).join('')}</div>`;
   grid.querySelectorAll('.cours-card').forEach(card=>{
     card.onclick = ()=> openCoursEditor(state.data.cours.find(i=>i.id===card.dataset.id), false);
   });
 }
 
 function coursCardHTML(item){
-  const catLabel = item.categorie==='eps' ? 'EPS' : 'Vie de classe';
+  const typeLabel = {fiche:'Fiche', exercice:'Exercice', document:'Document', mixte:'Mixte'}[item.type] || '';
   const excerpt = (item.consignes || item.contenu || '').slice(0,110);
   return `
     <div class="cours-card" data-id="${item.id}">
       <div class="cc-top">
         <div class="cc-title">${escHTML(item.titre) || '(sans titre)'}</div>
-        <span class="chip ${item.categorie==='eps'?'eps':'vdc'}">${catLabel}</span>
+        <span class="chip vdc">${typeLabel}</span>
       </div>
       <div class="cc-meta">${fmtDate(item.datePublication)} · ${item.questions?.length||0} question(s)</div>
       <div class="cc-excerpt">${escHTML(excerpt)}${excerpt.length>=110?'…':''}</div>
@@ -1343,9 +1396,6 @@ function openAIGenerateModal(){
     <h3>Générer avec l'IA</h3>
     <div class="field"><label>Thème / sujet</label><input id="ai-theme" placeholder="ex. les fondamentaux du basket-ball, l'organisation du cartable…" autofocus></div>
     <div class="field-row">
-      <div class="field"><label>Catégorie</label>
-        <select id="ai-cat"><option value="eps">EPS</option><option value="vdc">Vie de classe</option></select>
-      </div>
       <div class="field"><label>Type</label>
         <select id="ai-type">
           <option value="fiche">Fiche / consignes</option>
@@ -1365,14 +1415,13 @@ function openAIGenerateModal(){
   document.getElementById('m-generate').onclick = async ()=>{
     const theme = document.getElementById('ai-theme').value.trim();
     if(!theme){ document.getElementById('ai-error').textContent = 'Indique un thème.'; return; }
-    const cat = document.getElementById('ai-cat').value;
     const type = document.getElementById('ai-type').value;
     const details = document.getElementById('ai-details').value.trim();
     const btn = document.getElementById('m-generate');
     btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> Génération…`;
     document.getElementById('ai-error').textContent = '';
     try{
-      const item = await generateCoursWithAI({theme, cat, type, details});
+      const item = await generateCoursWithAI({theme, type, details});
       closeModal();
       openCoursEditor(item, true);
     }catch(err){
@@ -1383,15 +1432,14 @@ function openAIGenerateModal(){
   };
 }
 
-async function generateCoursWithAI({theme, cat, type, details}){
-  const catLabel = cat==='eps' ? "une activité/séquence d'EPS (éducation physique et sportive)" : "un support de vie de classe (méthodologie, organisation, règles de vie, projet de professeur principal)";
+async function generateCoursWithAI({theme, type, details}){
   const typeInstruction = {
     fiche: "Privilégie des consignes claires, peu ou pas de questions.",
     exercice: "Inclus plusieurs questions ou tâches précises que l'élève doit réaliser.",
     mixte: "Mélange des consignes et quelques questions ou tâches."
   }[type];
   const system = `Tu rédiges du contenu pédagogique pour un professeur principal de 6ème (élèves de 11-12 ans) en collège en France. Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant ni après, sans balises markdown ni bloc de code. Clés attendues : "titre" (string court), "consignes" (string, 2-4 phrases), "contenu" (string, le corps de la fiche, paragraphes séparés par des sauts de ligne), "questions" (tableau de strings, peut être vide). Langue simple, adaptée à des élèves de 6ème.`;
-  const user = `Sujet : ${theme}\nType de contenu à produire : ${catLabel}.\n${typeInstruction}${details ? '\nPrécisions du professeur : '+details : ''}`;
+  const user = `Sujet : ${theme}\nType de contenu à produire : un support de vie de classe (méthodologie, organisation, règles de vie, projet de professeur principal).\n${typeInstruction}${details ? '\nPrécisions du professeur : '+details : ''}`;
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
@@ -1410,7 +1458,6 @@ async function generateCoursWithAI({theme, cat, type, details}){
   const parsed = JSON.parse(clean);
   const item = newCoursItem();
   item.titre = parsed.titre || theme;
-  item.categorie = cat;
   item.type = type;
   item.consignes = parsed.consignes || '';
   item.contenu = parsed.contenu || '';
@@ -1439,9 +1486,6 @@ function openCoursEditor(item, isNew){
             <div class="field"><label>Date</label><input id="cf-date" type="date" value="${item.datePublication||todayISO()}"></div>
           </div>
           <div class="field-row">
-            <div class="field"><label>Catégorie</label>
-              <select id="cf-cat"><option value="eps" ${item.categorie==='eps'?'selected':''}>EPS</option><option value="vdc" ${item.categorie==='vdc'?'selected':''}>Vie de classe</option></select>
-            </div>
             <div class="field"><label>Type</label>
               <select id="cf-type">
                 <option value="fiche" ${item.type==='fiche'?'selected':''}>Fiche / consignes</option>
@@ -1511,7 +1555,6 @@ function openCoursEditor(item, isNew){
   document.getElementById('btn-save-cours').onclick = ()=>{
     item.titre = document.getElementById('cf-titre').value.trim();
     item.datePublication = document.getElementById('cf-date').value || todayISO();
-    item.categorie = document.getElementById('cf-cat').value;
     item.type = document.getElementById('cf-type').value;
     item.consignes = document.getElementById('cf-consignes').value.trim();
     item.contenu = document.getElementById('cf-contenu').value.trim();
@@ -1525,7 +1568,6 @@ function closeCoursEditor(){ document.getElementById('modal-root').innerHTML='';
 function printCoursItem(item){
   const win = window.open('', '_blank');
   if(!win) return;
-  const catLabel = item.categorie==='eps' ? 'EPS' : 'Vie de classe';
   win.document.write(`
     <html><head><meta charset="utf-8"><title>${escHTML(item.titre)}</title>
     <style>
@@ -1537,7 +1579,7 @@ function printCoursItem(item){
       li{ margin-bottom:8px; }
     </style></head><body>
       <h1>${escHTML(item.titre||'Sans titre')}</h1>
-      <div class="meta">${catLabel} · ${fmtDate(item.datePublication)}${state.data.classe.nom ? ' · '+escHTML(state.data.classe.nom) : ''}</div>
+      <div class="meta">${fmtDate(item.datePublication)}${state.data.classe.nom ? ' · '+escHTML(state.data.classe.nom) : ''}</div>
       ${item.consignes ? `<div class="block"><b>Consignes</b><br>${escHTML(item.consignes)}</div>` : ''}
       ${item.contenu ? `<div class="block">${escHTML(item.contenu)}</div>` : ''}
       ${item.questions && item.questions.length ? `<div class="block"><b>Questions</b><ol>${item.questions.map(q=>`<li>${escHTML(q.enonce)}</li>`).join('')}</ol></div>` : ''}
@@ -1621,6 +1663,9 @@ function openExportModal(){
     const dateTag = todayISO();
     a.href = url; a.download = `suivi-pp-${(state.data.classe.nom||'classe').replace(/\s+/g,'_')}-${dateTag}.json`;
     a.click(); URL.revokeObjectURL(url);
+    localStorage.setItem(LAST_EXPORT_KEY, todayISO());
+    localStorage.removeItem(BACKUP_SNOOZE_KEY);
+    const b = document.getElementById('backup-banner'); if(b) b.remove();
   };
   document.getElementById('import-file').addEventListener('change', (ev)=>{
     const file = ev.target.files[0];
@@ -1647,6 +1692,7 @@ function escAttr(s){ return (s||'').replace(/"/g,'&quot;'); }
    ============================================================ */
 function init(){
   state.data = loadData();
+  updateSaveStatus('saved');
   document.querySelectorAll('.nav-item').forEach(b=>{
     b.addEventListener('click', ()=> setView(b.dataset.view));
   });
