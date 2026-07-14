@@ -141,42 +141,51 @@ function updateSaveStatus(mode){
 
 /* ============================================================
    SYNCHRONISATION FIREBASE (multi-appareils)
-   Nœud isolé "suivi-pp" — voir firebase-config.js.
-   Repli automatique sur localStorage seul si Firebase est
-   indisponible (réseau, bloqueur, etc.).
+   Nœud isolé "suivi-pp", protégé par connexion anonyme — voir
+   firebase-config.js. Repli automatique sur localStorage seul
+   si Firebase est indisponible (réseau, bloqueur, règles, etc.).
    ============================================================ */
 let firebaseSyncActive = false;
+let firebaseAuthed = false;
 
 function firebaseAvailable(){
   return typeof ROOT !== 'undefined' && ROOT && typeof ROOT.set === 'function' && typeof ROOT.on === 'function';
 }
 
 function pushToFirebase(){
-  if(!firebaseAvailable()) return;
+  if(!firebaseAvailable() || !firebaseAuthed) return;
   try{ ROOT.set(state.data); }catch(e){ console.error('Erreur synchro Firebase', e); }
 }
 
 function initFirebaseSync(){
   if(!firebaseAvailable()) return;
-  let firstSnapshot = true;
-  ROOT.on('value', (snap)=>{
-    firebaseSyncActive = true;
-    const remote = snap.val();
-    if(remote){
-      if(JSON.stringify(remote) !== JSON.stringify(state.data)){
-        state.data = remote;
-        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data)); }catch(e){}
-        updateSaveStatus('synced');
-        render();
-      } else {
-        updateSaveStatus('synced');
+  const start = ()=>{
+    firebaseAuthed = true;
+    let firstSnapshot = true;
+    ROOT.on('value', (snap)=>{
+      firebaseSyncActive = true;
+      const remote = snap.val();
+      if(remote){
+        if(JSON.stringify(remote) !== JSON.stringify(state.data)){
+          state.data = remote;
+          try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data)); }catch(e){}
+          updateSaveStatus('synced');
+          render();
+        } else {
+          updateSaveStatus('synced');
+        }
+      } else if(firstSnapshot && state.data.eleves && state.data.eleves.length){
+        // Rien sur Firebase pour l'instant mais des données locales existent déjà : on les publie.
+        pushToFirebase();
       }
-    } else if(firstSnapshot && state.data.eleves && state.data.eleves.length){
-      // Rien sur Firebase pour l'instant mais des données locales existent déjà : on les publie.
-      pushToFirebase();
-    }
-    firstSnapshot = false;
-  }, (err)=>{ console.error('Erreur écoute Firebase', err); });
+      firstSnapshot = false;
+    }, (err)=>{ console.error('Erreur écoute Firebase (règles/auth ?)', err); });
+  };
+  if(typeof AUTH_READY !== 'undefined' && AUTH_READY && typeof AUTH_READY.then === 'function'){
+    AUTH_READY.then((user)=>{ if(user) start(); else console.error('Connexion anonyme Firebase non établie, synchro désactivée.'); });
+  } else {
+    start();
+  }
 }
 
 function getEleve(id){ return state.data.eleves.find(e=>e.id===id); }
