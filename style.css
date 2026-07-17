@@ -263,18 +263,23 @@ body.presentation-mode .conseil-stats .cs-item b{ font-size:22px; }
 }
 .photo-frame img{ width:100%; height:100%; object-fit:cover; }
 
-.trombi-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(110px,1fr)); gap:16px; }
-.trombi-cell{ display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; }
-.trombi-photo{
-  width:100%; aspect-ratio:1; border-radius:14px; overflow:hidden;
-  background:var(--surface); border:1px solid var(--hairline);
-  display:flex; align-items:center; justify-content:center;
-  font-family:var(--font-brand); font-weight:700; font-size:24px; color:var(--accent);
-  transition:border-color .12s, transform .12s;
+.trombi-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(110px,1fr)); gap:12px; }
+.trombi-cell{
+  display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer;
+  background:var(--raised-2); border:1px solid var(--hairline); border-radius:12px;
+  padding:10px; text-align:center; transition:border-color .12s, transform .12s;
 }
-.trombi-cell:hover .trombi-photo{ border-color:var(--accent-line); transform:translateY(-2px); }
+.trombi-cell:hover{ border-color:var(--accent-line); transform:translateY(-2px); }
+.trombi-photo{
+  width:72px; height:72px; border-radius:50%; overflow:hidden; flex:none;
+  display:flex; align-items:center; justify-content:center; font-size:26px;
+}
+.trombi-photo.has-photo{ border:2px solid var(--accent); }
+.trombi-photo.empty{ border:2px dashed var(--hairline-2); background:var(--raised); color:var(--muted-2); }
 .trombi-photo img{ width:100%; height:100%; object-fit:cover; }
-.trombi-name{ font-size:12px; text-align:center; color:var(--muted); line-height:1.3; }
+.trombi-name{ font-size:11px; font-weight:500; color:var(--text); line-height:1.3; }
+.trombi-del{ font-size:10px; color:var(--danger); cursor:pointer; }
+.trombi-del:hover{ text-decoration:underline; }
 
 .tag{
   font-family:var(--font-mono); font-size:10.5px; padding:3px 9px; border-radius:999px; white-space:nowrap;

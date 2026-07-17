@@ -272,7 +272,6 @@ function initiales(e){ return ((e.prenom||'?')[0]+(e.nom||'?')[0]).toUpperCase()
 const VIEW_META = {
   accueil:    { title:'Accueil',            sub:"Vue d'ensemble de la classe" },
   eleves:     { title:'Élèves',             sub:'Fiches, notes de vie scolaire, absences' },
-  trombi:     { title:'Trombinoscope',      sub:'Photos de la classe' },
   bulletins:  { title:'Bulletins',          sub:'Suivi des moyennes par matière' },
   conseils:   { title:'Conseils de classe', sub:'Préparation et appréciations générales' },
   orientation:{ title:'Orientation',        sub:'Vœux, stages, affectation' },
@@ -301,7 +300,6 @@ function render(){
   try{
     if(state.view==='accueil') return renderAccueil(c, actions);
     if(state.view==='eleves') return renderEleves(c, actions);
-    if(state.view==='trombi') return renderTrombi(c, actions);
     if(state.view==='bulletins') return renderBulletins(c, actions);
     if(state.view==='conseils') return renderConseils(c, actions);
     if(state.view==='orientation') return renderOrientation(c, actions);
@@ -539,45 +537,64 @@ function bindTrimestreSwitch(container){
 /* ============================================================
    ÉLÈVES — liste + fiche détail
    ============================================================ */
+let eleveViewMode = 'liste';
+
 function renderEleves(c, actions){
-  actions.innerHTML = `<button class="btn btn-primary" id="btn-add-eleve">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-    Ajouter un élève</button>`;
+  actions.innerHTML = `
+    <div class="trimestre-switch" id="eleve-view-switch">
+      <button data-m="liste" class="${eleveViewMode==='liste'?'active':''}">Liste</button>
+      <button data-m="photos" class="${eleveViewMode==='photos'?'active':''}">Photos</button>
+    </div>
+    <button class="btn btn-primary" id="btn-add-eleve" style="margin-left:10px;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+      Ajouter un élève</button>`;
   document.getElementById('btn-add-eleve').onclick = openAddEleveModal;
+  document.getElementById('eleve-view-switch').querySelectorAll('button').forEach(b=>{
+    b.onclick = ()=>{ eleveViewMode = b.dataset.m; renderEleves(c, actions); };
+  });
 
   const eleves = [...state.data.eleves].sort((a,b)=> (a.nom+a.prenom).localeCompare(b.nom+b.prenom));
   if(!eleves.length){
     c.innerHTML = `<div class="empty-state"><h3>Aucun élève</h3><p>Ajoute les élèves de ta classe pour commencer le suivi.</p></div>`;
     return;
   }
+
+  if(eleveViewMode==='photos'){
+    c.innerHTML = `<div class="trombi-grid">${eleves.map(trombiCardHTML).join('')}</div>`;
+    c.querySelectorAll('.trombi-cell').forEach(cell=>{
+      cell.addEventListener('click', (ev)=>{
+        if(ev.target.closest('.trombi-del')) return;
+        openEleveFiche(cell.dataset.id);
+      });
+    });
+    c.querySelectorAll('.trombi-del').forEach(link=>{
+      link.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        const eid = link.dataset.eid;
+        confirmModal('Supprimer cette photo ?', ()=>{
+          const el = getEleve(eid);
+          el.photo = '';
+          saveNow();
+          renderEleves(c, actions);
+        });
+      });
+    });
+    return;
+  }
+
   c.innerHTML = `<div class="eleves-list">${eleves.map(e=>eleveCardHTML(e, alerteLevel(e))).join('')}</div>`;
   c.querySelectorAll('.eleve-card').forEach(card=>{
     card.onclick = ()=> openEleveFiche(card.dataset.id);
   });
 }
 
-function renderTrombi(c, actions){
-  actions.innerHTML = '';
-  const eleves = [...state.data.eleves].sort((a,b)=> (a.nom+a.prenom).localeCompare(b.nom+b.prenom));
-  if(!eleves.length){
-    c.innerHTML = `<div class="empty-state"><h3>Aucun élève</h3><p>Ajoute des élèves puis leur photo depuis leur fiche (onglet Infos).</p></div>`;
-    return;
-  }
-  const sansPhoto = eleves.filter(e=>!e.photo).length;
-  c.innerHTML = `
-    ${sansPhoto ? `<p class="muted" style="font-size:12.5px; margin-bottom:14px;">${sansPhoto} élève${sansPhoto>1?'s':''} sans photo — ouvre leur fiche (onglet Infos) pour en ajouter une.</p>` : ''}
-    <div class="trombi-grid">
-      ${eleves.map(e=>`
-        <div class="trombi-cell" data-id="${e.id}">
-          <div class="trombi-photo">${e.photo ? `<img src="${e.photo}" alt="">` : `<span>${initiales(e)}</span>`}</div>
-          <div class="trombi-name">${e.prenom}<br>${e.nom}</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
-  c.querySelectorAll('.trombi-cell').forEach(cell=>{
-    cell.onclick = ()=> openEleveFiche(cell.dataset.id);
-  });
+function trombiCardHTML(e){
+  return `
+    <div class="trombi-cell" data-id="${e.id}">
+      <div class="trombi-photo ${e.photo?'has-photo':'empty'}">${e.photo ? `<img src="${e.photo}" alt="">` : `<span>👤</span>`}</div>
+      <div class="trombi-name">${escHTML(e.prenom)}<br>${escHTML(e.nom)}</div>
+      ${e.photo ? `<span class="trombi-del" data-eid="${e.id}">Supprimer</span>` : ''}
+    </div>`;
 }
 
 function openAddEleveModal(){
