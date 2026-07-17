@@ -85,17 +85,36 @@ function defaultData(){
   };
 }
 
+function normalizeData(parsed){
+  if(!parsed || typeof parsed !== 'object') return defaultData();
+  if(!parsed.classe) parsed.classe = defaultData().classe;
+  if(!parsed.classe.matieres) parsed.classe.matieres = DEFAULT_MATIERES.slice();
+  if(!parsed.eleves) parsed.eleves = [];
+  if(!parsed.cours) parsed.cours = [];
+  if(!parsed.mappingTemplates) parsed.mappingTemplates = {};
+  parsed.eleves.forEach(e=>{
+    if(!e.contacts) e.contacts = [];
+    if(!e.viescolaire) e.viescolaire = [];
+    if(!e.absences) e.absences = [];
+    if(!e.dispositifs) e.dispositifs = [];
+    if(!e.bulletins) e.bulletins = { T1:{}, T2:{}, T3:{} };
+    TRIMESTRES.forEach(t=>{ if(!e.bulletins[t]) e.bulletins[t] = {}; });
+    if(!e.orientation) e.orientation = { voeux:[], stages:[], notesOrientation:'' };
+    if(!e.orientation.voeux) e.orientation.voeux = [];
+    if(!e.orientation.stages) e.orientation.stages = [];
+    if(!e.rdv) e.rdv = [];
+  });
+  parsed.cours.forEach(item=>{
+    if(!item.questions) item.questions = [];
+  });
+  return parsed;
+}
+
 function loadData(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
     if(!raw) return defaultData();
-    const parsed = JSON.parse(raw);
-    if(!parsed.classe) parsed.classe = defaultData().classe;
-    if(!parsed.eleves) parsed.eleves = [];
-    if(!parsed.cours) parsed.cours = [];
-    if(!parsed.mappingTemplates) parsed.mappingTemplates = {};
-    parsed.eleves.forEach(e=>{ if(!e.dispositifs) e.dispositifs = []; });
-    return parsed;
+    return normalizeData(JSON.parse(raw));
   }catch(e){ console.error('Erreur chargement données', e); return defaultData(); }
 }
 
@@ -166,11 +185,12 @@ function initFirebaseSync(){
       firebaseSyncActive = true;
       const remote = snap.val();
       if(remote){
-        if(JSON.stringify(remote) !== JSON.stringify(state.data)){
-          state.data = remote;
+        const normalized = normalizeData(remote);
+        if(JSON.stringify(normalized) !== JSON.stringify(state.data)){
+          state.data = normalized;
           try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data)); }catch(e){}
           updateSaveStatus('synced');
-          render();
+          try{ render(); }catch(err){ console.error('Erreur affichage après synchro', err); }
         } else {
           updateSaveStatus('synced');
         }
@@ -275,13 +295,18 @@ function render(){
   document.getElementById('classe-nom-pill').textContent = state.data.classe.nom || 'Classe non définie';
   document.getElementById('classe-effectif-pill').textContent = state.data.eleves.length + (state.data.eleves.length>1 ? ' élèves' : ' élève');
 
-  if(state.view==='accueil') return renderAccueil(c, actions);
-  if(state.view==='eleves') return renderEleves(c, actions);
-  if(state.view==='bulletins') return renderBulletins(c, actions);
-  if(state.view==='conseils') return renderConseils(c, actions);
-  if(state.view==='orientation') return renderOrientation(c, actions);
-  if(state.view==='rdv') return renderRdv(c, actions);
-  if(state.view==='cours') return renderCours(c, actions);
+  try{
+    if(state.view==='accueil') return renderAccueil(c, actions);
+    if(state.view==='eleves') return renderEleves(c, actions);
+    if(state.view==='bulletins') return renderBulletins(c, actions);
+    if(state.view==='conseils') return renderConseils(c, actions);
+    if(state.view==='orientation') return renderOrientation(c, actions);
+    if(state.view==='rdv') return renderRdv(c, actions);
+    if(state.view==='cours') return renderCours(c, actions);
+  }catch(err){
+    console.error('Erreur affichage de la vue', state.view, err);
+    c.innerHTML = `<div class="empty-state"><h3>Un problème est survenu sur cet écran</h3><p>Essaie de changer d'onglet puis de revenir, ou recharge la page. Tes données ne sont pas perdues.</p></div>`;
+  }
 }
 
 /* ============================================================
