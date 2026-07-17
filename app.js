@@ -545,10 +545,12 @@ function renderEleves(c, actions){
       <button data-m="liste" class="${eleveViewMode==='liste'?'active':''}">Liste</button>
       <button data-m="photos" class="${eleveViewMode==='photos'?'active':''}">Photos</button>
     </div>
+    <button class="btn btn-sm" id="btn-open-trombi" style="margin-left:10px;">📷 Importer trombinoscope</button>
     <button class="btn btn-primary" id="btn-add-eleve" style="margin-left:10px;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
       Ajouter un élève</button>`;
   document.getElementById('btn-add-eleve').onclick = openAddEleveModal;
+  document.getElementById('btn-open-trombi').onclick = openTrombinoscopeTool;
   document.getElementById('eleve-view-switch').querySelectorAll('button').forEach(b=>{
     b.onclick = ()=>{ eleveViewMode = b.dataset.m; renderEleves(c, actions); };
   });
@@ -595,6 +597,239 @@ function trombiCardHTML(e){
       <div class="trombi-name">${escHTML(e.prenom)}<br>${escHTML(e.nom)}</div>
       ${e.photo ? `<span class="trombi-del" data-eid="${e.id}">Supprimer</span>` : ''}
     </div>`;
+}
+
+/* ============================================================
+   TROMBINOSCOPE — import d'une photo/PDF de groupe + découpage
+   manuel par élève (glisser un rectangle sur chaque visage).
+   ============================================================ */
+let trombiOrigImg = null;
+let trombiSelectedEid = '';
+
+function ensurePdfJs(){
+  return new Promise((resolve, reject)=>{
+    if(window.pdfjsLib) return resolve();
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = ()=>{
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve();
+    };
+    script.onerror = ()=> reject(new Error('pdf.js indisponible'));
+    document.head.appendChild(script);
+  });
+}
+
+function openTrombinoscopeTool(){
+  trombiOrigImg = null;
+  trombiSelectedEid = '';
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div id="trombi-tool" style="position:fixed; inset:0; background:var(--ink); z-index:9000; display:flex; flex-direction:column;">
+      <div style="background:var(--surface); border-bottom:1px solid var(--hairline); padding:14px 20px; display:flex; align-items:center; gap:12px; flex:none;">
+        <button class="btn btn-sm" id="btn-trombi-close">✕ Fermer</button>
+        <div style="flex:1; text-align:center;">
+          <div style="font-family:var(--font-brand); font-weight:800; font-size:16px;">Trombinoscope</div>
+          <div class="eyebrow" id="trombi-sub" style="margin-top:2px;">Importer une photo ou un PDF de classe</div>
+        </div>
+        <label class="btn btn-sm btn-primary" style="cursor:pointer;">📷 Importer
+          <input type="file" accept="image/*,application/pdf" id="trombi-file-input" style="display:none;">
+        </label>
+      </div>
+      <div style="flex:1; overflow-y:auto; padding:18px;" id="trombi-body"></div>
+    </div>
+  `;
+  document.getElementById('btn-trombi-close').onclick = closeTrombinoscopeTool;
+  document.getElementById('trombi-file-input').addEventListener('change', (ev)=>{
+    const file = ev.target.files[0];
+    if(file) loadTrombiFile(file);
+  });
+  renderTrombiImportZone();
+}
+function closeTrombinoscopeTool(){
+  document.getElementById('modal-root').innerHTML = '';
+  render();
+}
+
+function renderTrombiImportZone(){
+  const body = document.getElementById('trombi-body');
+  const eleves = [...state.data.eleves].sort((a,b)=>(a.nom+a.prenom).localeCompare(b.nom+b.prenom));
+  body.innerHTML = `
+    <div style="text-align:center; padding:40px 20px; background:var(--surface); border:1.5px dashed var(--hairline-2); border-radius:16px; margin-bottom:20px;">
+      <div style="font-size:2.6rem; margin-bottom:10px;">🖼️</div>
+      <div style="font-weight:600; margin-bottom:6px;">Importer une photo ou un PDF de trombinoscope</div>
+      <div class="muted" style="font-size:12.5px; margin-bottom:18px;">Photo de classe, export École Directe, liste scannée…</div>
+      <label class="btn btn-primary" style="cursor:pointer;">Choisir un fichier
+        <input type="file" accept="image/*,application/pdf" id="trombi-file-input-2" style="display:none;">
+      </label>
+      <div id="trombi-load-status" class="muted" style="font-size:12px; margin-top:10px;"></div>
+    </div>
+    <div class="trombi-grid">${eleves.map(trombiCardHTML).join('')}</div>
+  `;
+  document.getElementById('trombi-file-input-2').addEventListener('change', (ev)=>{
+    const file = ev.target.files[0];
+    if(file) loadTrombiFile(file);
+  });
+  body.querySelectorAll('.trombi-del').forEach(link=>{
+    link.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      const eid = link.dataset.eid;
+      confirmModal('Supprimer cette photo ?', ()=>{
+        getEleve(eid).photo = '';
+        saveNow();
+        renderTrombiImportZone();
+      });
+    });
+  });
+}
+
+async function loadTrombiFile(file){
+  const status = document.getElementById('trombi-load-status');
+  try{
+    let imgUrl;
+    if(file.type === 'application/pdf'){
+      if(status) status.textContent = 'Chargement du PDF…';
+      await ensurePdfJs();
+      const buf = await file.arrayBuffer();
+      const pdf = await window.pdfjsLib.getDocument({data:buf}).promise;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({scale:2});
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width; canvas.height = viewport.height;
+      await page.render({canvasContext:canvas.getContext('2d'), viewport}).promise;
+      imgUrl = canvas.toDataURL('image/png');
+      if(pdf.numPages > 1 && status) status.textContent = `Première page utilisée (le PDF en contient ${pdf.numPages}).`;
+    } else {
+      imgUrl = URL.createObjectURL(file);
+    }
+    const img = new Image();
+    img.onload = ()=>{ trombiOrigImg = img; renderTrombiCropZone(imgUrl); };
+    img.onerror = ()=>{ if(status) status.textContent = "Impossible de lire ce fichier."; };
+    img.src = imgUrl;
+  }catch(err){
+    console.error(err);
+    if(status) status.textContent = "Erreur lors du chargement (fichier invalide ou pdf.js indisponible).";
+  }
+}
+
+function renderTrombiCropZone(imgUrl){
+  document.getElementById('trombi-sub').textContent = 'Choisis un élève puis trace un rectangle sur son visage';
+  const body = document.getElementById('trombi-body');
+  body.innerHTML = `
+    <div style="display:grid; grid-template-columns:1fr 300px; gap:18px; align-items:start;">
+      <div>
+        <p class="muted" style="font-size:12px; margin-bottom:8px;">Sélectionne l'élève à droite, puis trace un rectangle autour de son visage sur la photo.</p>
+        <div id="trombi-img-wrap" style="position:relative; display:inline-block; cursor:crosshair; user-select:none; line-height:0; max-width:100%;">
+          <img id="trombi-img-display" src="${imgUrl}" style="max-width:100%; border-radius:10px; display:block;" draggable="false">
+          <div id="trombi-sel-box" style="display:none; position:absolute; border:2px solid var(--success); background:color-mix(in srgb, var(--success) 15%, transparent); pointer-events:none; box-sizing:border-box;"></div>
+        </div>
+      </div>
+      <div>
+        <div class="eyebrow" style="margin-bottom:10px;">Élèves à associer</div>
+        <div id="trombi-faces-list"></div>
+      </div>
+    </div>
+  `;
+  renderTrombiFacesList();
+  setupTrombiDrag();
+}
+
+function renderTrombiFacesList(){
+  const list = document.getElementById('trombi-faces-list');
+  const eleves = [...state.data.eleves].sort((a,b)=>(a.nom+a.prenom).localeCompare(b.nom+b.prenom));
+  list.innerHTML = `
+    <div style="background:var(--raised-2); border-radius:10px; padding:10px; margin-bottom:10px;">
+      <div class="muted" style="font-size:12px; margin-bottom:6px;">Sélectionner un élève :</div>
+      <select id="trombi-manual-sel">
+        <option value="">— Choisir —</option>
+        ${eleves.map(e=> `<option value="${e.id}" ${e.photo?'style="color:var(--success);"':''}>${escHTML(e.prenom)} ${escHTML(e.nom)}${e.photo?' ✓':''}</option>`).join('')}
+      </select>
+      <div class="muted" style="font-size:11px; margin-top:6px;">Puis trace un rectangle sur la photo</div>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:6px; max-height:50vh; overflow-y:auto;">
+      ${eleves.filter(e=>e.photo).map(e=>`
+        <div style="display:flex; align-items:center; gap:8px; padding:6px 8px; background:var(--raised); border-radius:8px;">
+          <img src="${e.photo}" style="width:32px; height:32px; border-radius:50%; object-fit:cover; border:1.5px solid var(--success);">
+          <span style="font-size:12px; color:var(--success); flex:1;">${escHTML(e.prenom)} ${escHTML(e.nom)}</span>
+          <span data-eid="${e.id}" class="trombi-del-inline" style="font-size:12px; color:var(--danger); cursor:pointer;">✕</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  document.getElementById('trombi-manual-sel').addEventListener('change', (ev)=>{ trombiSelectedEid = ev.target.value; });
+  list.querySelectorAll('.trombi-del-inline').forEach(link=>{
+    link.addEventListener('click', ()=>{
+      getEleve(link.dataset.eid).photo = '';
+      saveNow();
+      renderTrombiFacesList();
+    });
+  });
+}
+
+function setupTrombiDrag(){
+  const wrap = document.getElementById('trombi-img-wrap');
+  const selBox = document.getElementById('trombi-sel-box');
+  const display = document.getElementById('trombi-img-display');
+  if(!wrap || !selBox || !display) return;
+  let dragging=false, startX,startY, startIX=0, startIY=0;
+
+  function getPos(ev){
+    const wr = wrap.getBoundingClientRect();
+    const dr = display.getBoundingClientRect();
+    const clientX = ev.touches ? ev.touches[0].clientX : (ev.changedTouches ? ev.changedTouches[0].clientX : ev.clientX);
+    const clientY = ev.touches ? ev.touches[0].clientY : (ev.changedTouches ? ev.changedTouches[0].clientY : ev.clientY);
+    const x = Math.max(0, Math.min(clientX-wr.left, wr.width));
+    const y = Math.max(0, Math.min(clientY-wr.top, wr.height));
+    const ix = Math.max(0, Math.min(clientX-dr.left, dr.width));
+    const iy = Math.max(0, Math.min(clientY-dr.top, dr.height));
+    return {x,y,ix,iy,dr};
+  }
+  function startDrag(ev){
+    if(!trombiSelectedEid){ alert("Choisis d'abord un élève dans la liste à droite."); return; }
+    ev.preventDefault();
+    dragging = true;
+    const p = getPos(ev);
+    startX=p.x; startY=p.y; startIX=p.ix; startIY=p.iy;
+    selBox.style.display='block';
+    selBox.style.left=startX+'px'; selBox.style.top=startY+'px';
+    selBox.style.width='0'; selBox.style.height='0';
+  }
+  function moveDrag(ev){
+    if(!dragging) return;
+    ev.preventDefault();
+    const p = getPos(ev);
+    const x=Math.min(startX,p.x), y=Math.min(startY,p.y);
+    const w=Math.abs(p.x-startX), h=Math.abs(p.y-startY);
+    selBox.style.left=x+'px'; selBox.style.top=y+'px';
+    selBox.style.width=w+'px'; selBox.style.height=h+'px';
+  }
+  function endDrag(ev){
+    if(!dragging) return;
+    dragging = false;
+    const p = getPos(ev);
+    selBox.style.display='none';
+    const w = Math.abs(p.ix-startIX), h = Math.abs(p.iy-startIY);
+    if(w<10 || h<10 || !trombiSelectedEid) return;
+    const imgX = Math.min(startIX,p.ix), imgY = Math.min(startIY,p.iy);
+    const dr = p.dr;
+    const scaleX = trombiOrigImg.naturalWidth/dr.width;
+    const scaleY = trombiOrigImg.naturalHeight/dr.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = 160; canvas.height = 160;
+    canvas.getContext('2d').drawImage(trombiOrigImg, imgX*scaleX, imgY*scaleY, w*scaleX, h*scaleY, 0, 0, 160, 160);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    const eleve = getEleve(trombiSelectedEid);
+    eleve.photo = dataUrl;
+    saveNow();
+    trombiSelectedEid = '';
+    renderTrombiFacesList();
+  }
+  wrap.addEventListener('mousedown', startDrag);
+  wrap.addEventListener('mousemove', moveDrag);
+  wrap.addEventListener('mouseup', endDrag);
+  wrap.addEventListener('touchstart', startDrag, {passive:false});
+  wrap.addEventListener('touchmove', moveDrag, {passive:false});
+  wrap.addEventListener('touchend', endDrag, {passive:false});
 }
 
 function openAddEleveModal(){
