@@ -103,6 +103,7 @@ function normalizeData(parsed){
     if(!e.orientation.voeux) e.orientation.voeux = [];
     if(!e.orientation.stages) e.orientation.stages = [];
     if(!e.rdv) e.rdv = [];
+    if(e.photo===undefined) e.photo = '';
   });
   parsed.cours.forEach(item=>{
     if(!item.questions) item.questions = [];
@@ -212,7 +213,7 @@ function getEleve(id){ return state.data.eleves.find(e=>e.id===id); }
 
 function newEleve(nom, prenom){
   return {
-    id: uid(), nom: nom||'', prenom: prenom||'', dateNaissance:'', sexe:'',
+    id: uid(), nom: nom||'', prenom: prenom||'', dateNaissance:'', sexe:'', photo:'',
     contacts: [],
     viescolaire: [],
     absences: [],
@@ -271,10 +272,12 @@ function initiales(e){ return ((e.prenom||'?')[0]+(e.nom||'?')[0]).toUpperCase()
 const VIEW_META = {
   accueil:    { title:'Accueil',            sub:"Vue d'ensemble de la classe" },
   eleves:     { title:'Élèves',             sub:'Fiches, notes de vie scolaire, absences' },
+  trombi:     { title:'Trombinoscope',      sub:'Photos de la classe' },
   bulletins:  { title:'Bulletins',          sub:'Suivi des moyennes par matière' },
   conseils:   { title:'Conseils de classe', sub:'Préparation et appréciations générales' },
   orientation:{ title:'Orientation',        sub:'Vœux, stages, affectation' },
   rdv:        { title:'Rendez-vous parents',sub:'Comptes-rendus des entretiens' },
+  agenda:     { title:'Agenda',             sub:'Rendez-vous, renouvellements et échéances' },
   cours:      { title:'Cours & activités',  sub:'Fiches et exercices à donner aux élèves' },
 };
 
@@ -298,10 +301,12 @@ function render(){
   try{
     if(state.view==='accueil') return renderAccueil(c, actions);
     if(state.view==='eleves') return renderEleves(c, actions);
+    if(state.view==='trombi') return renderTrombi(c, actions);
     if(state.view==='bulletins') return renderBulletins(c, actions);
     if(state.view==='conseils') return renderConseils(c, actions);
     if(state.view==='orientation') return renderOrientation(c, actions);
     if(state.view==='rdv') return renderRdv(c, actions);
+    if(state.view==='agenda') return renderAgenda(c, actions);
     if(state.view==='cours') return renderCours(c, actions);
   }catch(err){
     console.error('Erreur affichage de la vue', state.view, err);
@@ -400,7 +405,7 @@ function dispositifsRenouvellementHTML(eleves){
     <div class="eleves-list" id="acc-disp-renouv">
       ${rows.map(({e,d,j})=>`
         <div class="eleve-card ${j<0?'alerte':'attention'}" data-id="${e.id}">
-          <div class="eleve-avatar">${initiales(e)}</div>
+          <div class="eleve-avatar">${e.photo ? `<img src="${e.photo}" alt="">` : initiales(e)}</div>
           <div>
             <div class="eleve-name">${e.prenom} ${e.nom} — ${escHTML(d.type)}</div>
             <div class="eleve-meta">${j<0 ? `Renouvellement dépassé de ${Math.abs(j)} j` : `Dans ${j} j`} · ${fmtDate(d.dateRenouvellement)}</div>
@@ -513,7 +518,7 @@ function eleveCardHTML(e, lvl){
   if(!tags.length) tags.push(`<span class="tag success">RAS</span>`);
   return `
     <div class="eleve-card ${lvl}" data-id="${e.id}">
-      <div class="eleve-avatar">${initiales(e)}</div>
+      <div class="eleve-avatar">${e.photo ? `<img src="${e.photo}" alt="">` : initiales(e)}</div>
       <div>
         <div class="eleve-name">${e.prenom} ${e.nom}</div>
         <div class="eleve-meta">${e.contacts?.length||0} contact${(e.contacts?.length||0)>1?'s':''} enregistré${(e.contacts?.length||0)>1?'s':''}</div>
@@ -548,6 +553,30 @@ function renderEleves(c, actions){
   c.innerHTML = `<div class="eleves-list">${eleves.map(e=>eleveCardHTML(e, alerteLevel(e))).join('')}</div>`;
   c.querySelectorAll('.eleve-card').forEach(card=>{
     card.onclick = ()=> openEleveFiche(card.dataset.id);
+  });
+}
+
+function renderTrombi(c, actions){
+  actions.innerHTML = '';
+  const eleves = [...state.data.eleves].sort((a,b)=> (a.nom+a.prenom).localeCompare(b.nom+b.prenom));
+  if(!eleves.length){
+    c.innerHTML = `<div class="empty-state"><h3>Aucun élève</h3><p>Ajoute des élèves puis leur photo depuis leur fiche (onglet Infos).</p></div>`;
+    return;
+  }
+  const sansPhoto = eleves.filter(e=>!e.photo).length;
+  c.innerHTML = `
+    ${sansPhoto ? `<p class="muted" style="font-size:12.5px; margin-bottom:14px;">${sansPhoto} élève${sansPhoto>1?'s':''} sans photo — ouvre leur fiche (onglet Infos) pour en ajouter une.</p>` : ''}
+    <div class="trombi-grid">
+      ${eleves.map(e=>`
+        <div class="trombi-cell" data-id="${e.id}">
+          <div class="trombi-photo">${e.photo ? `<img src="${e.photo}" alt="">` : `<span>${initiales(e)}</span>`}</div>
+          <div class="trombi-name">${e.prenom}<br>${e.nom}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  c.querySelectorAll('.trombi-cell').forEach(cell=>{
+    cell.onclick = ()=> openEleveFiche(cell.dataset.id);
   });
 }
 
@@ -592,6 +621,9 @@ function renderElevePanel(){
             <div class="sub muted" style="font-size:12px; margin-top:2px;">${e.dateNaissance ? 'Né(e) le '+fmtDate(e.dateNaissance) : 'Date de naissance non renseignée'}</div>
           </div>
           <div style="display:flex; gap:6px;">
+            <button class="icon-btn" id="btn-pdf-eleve" title="Exporter en PDF">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-2M6 14h12v7H6v-7Z"/></svg>
+            </button>
             <button class="icon-btn" id="btn-del-eleve" title="Supprimer l'élève">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-8 0 1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"/></svg>
             </button>
@@ -613,6 +645,7 @@ function renderElevePanel(){
 
   document.getElementById('panel-overlay').addEventListener('click', (ev)=>{ if(ev.target.id==='panel-overlay') closePanel(); });
   document.getElementById('btn-close-panel').onclick = closePanel;
+  document.getElementById('btn-pdf-eleve').onclick = ()=> printElevePDF(e);
   document.getElementById('btn-del-eleve').onclick = ()=>{
     confirmModal(`Supprimer ${e.prenom} ${e.nom} ? Toutes ses données seront perdues.`, ()=>{
       state.data.eleves = state.data.eleves.filter(x=>x.id!==e.id);
@@ -640,6 +673,20 @@ function renderEleveSubtab(e){
 /* --- Infos --- */
 function renderSubInfos(el, e){
   el.innerHTML = `
+    <div style="display:flex; gap:16px; align-items:center; margin-bottom:18px;">
+      <div class="photo-frame" id="photo-frame">
+        ${e.photo ? `<img src="${e.photo}" alt="">` : `<span>${initiales(e)}</span>`}
+      </div>
+      <div>
+        <div style="display:flex; gap:8px;">
+          <label class="btn btn-sm" style="cursor:pointer;">Choisir une photo
+            <input type="file" accept="image/*" id="photo-input" style="display:none;">
+          </label>
+          ${e.photo ? `<button class="btn btn-sm btn-ghost" id="btn-del-photo">Retirer</button>` : ''}
+        </div>
+        <p class="muted" style="font-size:11.5px; margin-top:6px;">Utilisée dans le trombinoscope et la fiche élève.</p>
+      </div>
+    </div>
     <div class="field-row">
       <div class="field"><label>Prénom</label><input data-f="prenom" value="${escAttr(e.prenom)}"></div>
       <div class="field"><label>Nom</label><input data-f="nom" value="${escAttr(e.nom)}"></div>
@@ -664,6 +711,22 @@ function renderSubInfos(el, e){
   el.querySelectorAll('[data-f]').forEach(inp=>{
     inp.addEventListener('input', ()=>{ e[inp.dataset.f]=inp.value; saveData(); if(inp.dataset.f==='nom'||inp.dataset.f==='prenom'){ document.querySelector('.panel-header h2').textContent = `${e.prenom} ${e.nom}`; } });
   });
+  const photoInput = document.getElementById('photo-input');
+  if(photoInput){
+    photoInput.addEventListener('change', ()=>{
+      const file = photoInput.files[0];
+      if(!file) return;
+      resizeImageToDataURL(file, 240, 0.75).then(dataUrl=>{
+        e.photo = dataUrl;
+        saveNow();
+        renderEleveSubtab(e);
+      }).catch(()=>{ alert("Impossible de lire cette image."); });
+    });
+  }
+  const delPhotoBtn = document.getElementById('btn-del-photo');
+  if(delPhotoBtn){
+    delPhotoBtn.onclick = ()=>{ e.photo=''; saveNow(); renderEleveSubtab(e); };
+  }
   renderContacts();
   document.getElementById('btn-add-contact').onclick = ()=>{
     if(!e.contacts) e.contacts=[];
@@ -1628,6 +1691,78 @@ function renderRdvListFor(e, container, onChange){
   });
 }
 
+/* ============================================================
+   AGENDA — vue globale chronologique
+   Rendez-vous, renouvellements de dispositifs, items de vie de
+   classe publiés : tout au même endroit, trié par date.
+   ============================================================ */
+function renderAgenda(c, actions){
+  actions.innerHTML = '';
+  const events = [];
+  state.data.eleves.forEach(e=>{
+    (e.rdv||[]).forEach(r=> events.push({
+      date: r.date, type:'rdv', label:`Rendez-vous — ${e.prenom} ${e.nom}`,
+      detail: r.motif || 'Sans motif précisé', eleveId: e.id
+    }));
+    (e.dispositifs||[]).forEach(d=>{
+      if(d.dateRenouvellement) events.push({
+        date: d.dateRenouvellement, type:'dispositif', label:`Renouvellement ${d.type} — ${e.prenom} ${e.nom}`,
+        detail: d.referent ? 'Référent : '+d.referent : '', eleveId: e.id
+      });
+    });
+  });
+  (state.data.cours||[]).forEach(item=>{
+    if(item.datePublication) events.push({
+      date:item.datePublication, type:'cours', label:`Vie de classe — ${item.titre||'(sans titre)'}`,
+      detail:item.consignes||'', coursId:item.id
+    });
+  });
+
+  if(!events.length){
+    c.innerHTML = `<div class="empty-state"><h3>Rien de programmé</h3><p>Les rendez-vous, renouvellements de dispositifs et séances de vie de classe apparaîtront ici automatiquement.</p></div>`;
+    return;
+  }
+
+  const today = todayISO();
+  events.sort((a,b)=> a.date.localeCompare(b.date));
+  const avenir = events.filter(ev=> ev.date >= today);
+  const passes = events.filter(ev=> ev.date < today).reverse();
+
+  const typeMeta = {
+    rdv:        { icon:'📅', cls:'' },
+    dispositif: { icon:'⚑', cls:'warning' },
+    cours:      { icon:'📖', cls:'' },
+  };
+  function rowHTML(ev){
+    const m = typeMeta[ev.type];
+    return `
+      <div class="entry-row agenda-row" ${ev.eleveId?`data-eid="${ev.eleveId}"`:''} ${ev.coursId?`data-cid="${ev.coursId}"`:''} style="cursor:pointer;">
+        <div class="entry-top">
+          <span class="tag ${m.cls}">${m.icon} ${fmtDate(ev.date)}</span>
+        </div>
+        <p style="font-weight:600; font-size:13.5px; margin-top:6px;">${escHTML(ev.label)}</p>
+        ${ev.detail ? `<p style="color:var(--muted); font-size:12.5px;">${escHTML(ev.detail)}</p>` : ''}
+      </div>`;
+  }
+
+  c.innerHTML = `
+    <div class="section-title">À venir</div>
+    <div class="eleves-list" style="margin-bottom:26px;">
+      ${avenir.length ? avenir.map(rowHTML).join('') : `<p class="muted" style="font-size:13px;">Rien de programmé à venir.</p>`}
+    </div>
+    <div class="section-title">Passés</div>
+    <div class="eleves-list">
+      ${passes.length ? passes.slice(0,30).map(rowHTML).join('') : `<p class="muted" style="font-size:13px;">Aucun historique.</p>`}
+    </div>
+  `;
+  c.querySelectorAll('.agenda-row').forEach(row=>{
+    row.onclick = ()=>{
+      if(row.dataset.eid) openEleveFiche(row.dataset.eid);
+      else if(row.dataset.cid) openCoursEditor(state.data.cours.find(i=>i.id===row.dataset.cid), false);
+    };
+  });
+}
+
 function openRdvModal(eleve, onDone){
   const eleves = state.data.eleves;
   const needSelect = !eleve;
@@ -1949,6 +2084,56 @@ function printCoursItem(item){
   setTimeout(()=> win.print(), 300);
 }
 
+function printElevePDF(e){
+  const win = window.open('', '_blank');
+  if(!win) return;
+  const matieres = state.data.classe.matieres;
+  const tableauMoyennes = TRIMESTRES.map(t=>{
+    const moy = moyenneGenerale(e, t);
+    return `<tr><td>${t}</td><td>${moy!==null ? moy.toFixed(1) : '—'}</td><td>${escHTML(e.bulletins?.[t]?.appreciationGenerale || '')}</td></tr>`;
+  }).join('');
+  const dispositifsHTML = (e.dispositifs||[]).length ? `
+    <div class="block"><b>Dispositifs</b>
+      <ul>${e.dispositifs.map(d=>`<li>${escHTML(d.type)}${d.dateDebut?' — depuis le '+fmtDate(d.dateDebut):''}${d.mesures?' : '+escHTML(d.mesures):''}</li>`).join('')}</ul>
+    </div>` : '';
+  const absNJ = absencesNonJustifiees(e), absTotal = absencesCount(e);
+  const contactsHTML = (e.contacts||[]).length ? `
+    <div class="block"><b>Contacts</b>
+      <ul>${e.contacts.map(ct=>`<li>${escHTML(ct.nom)} (${escHTML(ct.lien)})${ct.tel?' — '+escHTML(ct.tel):''}${ct.mail?' — '+escHTML(ct.mail):''}</li>`).join('')}</ul>
+    </div>` : '';
+
+  win.document.write(`
+    <html><head><meta charset="utf-8"><title>${escHTML(e.prenom+' '+e.nom)}</title>
+    <style>
+      body{ font-family: Georgia, serif; max-width:720px; margin:40px auto; color:#111; line-height:1.6; }
+      h1{ font-size:24px; margin-bottom:2px; }
+      .meta{ font-size:12px; color:#555; margin-bottom:24px; }
+      .block{ margin-bottom:18px; font-size:14px; }
+      table{ width:100%; border-collapse:collapse; font-size:13px; margin-top:6px; }
+      th, td{ border:1px solid #ccc; padding:6px 8px; text-align:left; vertical-align:top; }
+      th{ background:#f0f0f0; }
+      ul{ padding-left:20px; margin:6px 0; }
+      li{ margin-bottom:4px; }
+    </style></head><body>
+      <h1>${escHTML(e.prenom+' '+e.nom)}</h1>
+      <div class="meta">${state.data.classe.nom ? escHTML(state.data.classe.nom)+' · ' : ''}${state.data.classe.anneeScolaire||''}${e.dateNaissance ? ' · Né(e) le '+fmtDate(e.dateNaissance) : ''}</div>
+
+      <div class="block"><b>Moyennes générales et appréciations</b>
+        <table><thead><tr><th>Trimestre</th><th>Moyenne</th><th>Appréciation générale</th></tr></thead>
+        <tbody>${tableauMoyennes}</tbody></table>
+      </div>
+
+      <div class="block"><b>Assiduité</b> — ${absTotal} absence${absTotal>1?'s':''} au total, dont ${absNJ} non justifiée${absNJ>1?'s':''}.</div>
+
+      ${dispositifsHTML}
+      ${contactsHTML}
+    </body></html>
+  `);
+  win.document.close();
+  win.focus();
+  setTimeout(()=> win.print(), 300);
+}
+
 /* ============================================================
    MODALES génériques
    ============================================================ */
@@ -1991,6 +2176,12 @@ function openSettingsModal(){
       <button class="btn btn-ghost" id="m-cancel">Annuler</button>
       <button class="btn btn-primary" id="m-save">Enregistrer</button>
     </div>
+    <div class="divider"></div>
+    <div style="background:var(--danger-soft); border:1px solid rgba(255,107,107,.3); border-radius:var(--radius-m); padding:14px;">
+      <p style="font-size:12.5px; margin:0 0 8px; color:var(--danger); font-weight:600;">Nouvelle année scolaire</p>
+      <p class="muted" style="font-size:12px; margin:0 0 10px;">Supprime tous les élèves (fiches, bulletins, dispositifs, rendez-vous, orientation) et le nom de la classe. Conserve la liste des matières et les fiches Cours &amp; activités (réutilisables d'une année sur l'autre).</p>
+      <button class="btn btn-sm btn-danger" id="btn-new-year" style="border-color:rgba(255,107,107,.3);">Réinitialiser pour une nouvelle année</button>
+    </div>
   `);
   document.getElementById('m-cancel').onclick = closeModal;
   document.getElementById('m-save').onclick = ()=>{
@@ -1998,6 +2189,39 @@ function openSettingsModal(){
     cl.anneeScolaire = document.getElementById('s-annee').value.trim();
     cl.matieres = document.getElementById('s-matieres').value.split('\n').map(s=>s.trim()).filter(Boolean);
     saveNow(); closeModal(); render();
+  };
+  document.getElementById('btn-new-year').onclick = openNewYearModal;
+}
+
+function openNewYearModal(){
+  showModal(`
+    <h3>Nouvelle année scolaire</h3>
+    <p style="font-size:13px; color:var(--muted);">
+      Cette action supprime définitivement : tous les élèves, leurs bulletins, dispositifs, absences, notes de vie scolaire, rendez-vous et données d'orientation, ainsi que le nom de la classe.<br><br>
+      Sont conservés : la liste des matières et toutes les fiches de <b>Cours &amp; activités</b>.<br><br>
+      Pense à exporter une sauvegarde avant si tu veux garder une trace de cette année (bouton « Exporter / importer » dans la barre latérale).
+    </p>
+    <div class="field"><label>Tape <b>NOUVELLE ANNEE</b> pour confirmer</label><input id="ny-confirm" placeholder="NOUVELLE ANNEE" autocomplete="off"></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
+      <button class="btn btn-ghost" id="m-cancel">Annuler</button>
+      <button class="btn btn-danger" id="m-confirm" disabled style="opacity:.5; border:1px solid var(--hairline);">Réinitialiser</button>
+    </div>
+  `);
+  document.getElementById('m-cancel').onclick = closeModal;
+  const input = document.getElementById('ny-confirm');
+  const confirmBtn = document.getElementById('m-confirm');
+  input.addEventListener('input', ()=>{
+    const ok = input.value.trim().toUpperCase() === 'NOUVELLE ANNEE';
+    confirmBtn.disabled = !ok;
+    confirmBtn.style.opacity = ok ? '1' : '.5';
+  });
+  confirmBtn.onclick = ()=>{
+    if(confirmBtn.disabled) return;
+    state.data.eleves = [];
+    state.data.classe.nom = '';
+    saveNow();
+    closeModal();
+    setView('accueil');
   };
 }
 
@@ -2045,6 +2269,30 @@ function openExportModal(){
 /* ---------------- utils ---------------- */
 function escHTML(s){ return (s||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 function escAttr(s){ return (s||'').replace(/"/g,'&quot;'); }
+
+/* Redimensionne/recadre une photo en carré côté client avant stockage,
+   pour rester léger en localStorage et en synchro Firebase. */
+function resizeImageToDataURL(file, size, quality){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=> reject(new Error('read error'));
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=> reject(new Error('image error'));
+      img.onload = ()=>{
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const side = Math.min(img.width, img.height);
+        const sx = (img.width - side)/2, sy = (img.height - side)/2;
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 /* ============================================================
    INIT

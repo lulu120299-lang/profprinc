@@ -247,10 +247,35 @@ body.presentation-mode .conseil-stats .cs-item b{ font-size:22px; }
   width:38px; height:38px; border-radius:50%;
   background:var(--raised-2); display:flex; align-items:center; justify-content:center;
   font-family:var(--font-brand); font-weight:700; font-size:13px; color:var(--accent); flex:none;
+  overflow:hidden;
 }
+.eleve-avatar img{ width:100%; height:100%; object-fit:cover; }
 .eleve-name{ font-weight:700; font-size:14.5px; }
 .eleve-meta{ font-size:12px; color:var(--muted-2); margin-top:2px; }
 .eleve-tags{ margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+
+/* ---------------- Photo (fiche élève + trombinoscope) ---------------- */
+.photo-frame{
+  width:72px; height:72px; border-radius:14px; flex:none; overflow:hidden;
+  background:var(--raised-2); border:1px solid var(--hairline);
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-brand); font-weight:700; font-size:22px; color:var(--accent);
+}
+.photo-frame img{ width:100%; height:100%; object-fit:cover; }
+
+.trombi-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(110px,1fr)); gap:16px; }
+.trombi-cell{ display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; }
+.trombi-photo{
+  width:100%; aspect-ratio:1; border-radius:14px; overflow:hidden;
+  background:var(--surface); border:1px solid var(--hairline);
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-brand); font-weight:700; font-size:24px; color:var(--accent);
+  transition:border-color .12s, transform .12s;
+}
+.trombi-cell:hover .trombi-photo{ border-color:var(--accent-line); transform:translateY(-2px); }
+.trombi-photo img{ width:100%; height:100%; object-fit:cover; }
+.trombi-name{ font-size:12px; text-align:center; color:var(--muted); line-height:1.3; }
+
 .tag{
   font-family:var(--font-mono); font-size:10.5px; padding:3px 9px; border-radius:999px; white-space:nowrap;
   background:var(--raised-2); color:var(--muted); font-weight:600; letter-spacing:.02em;
