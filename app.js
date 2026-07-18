@@ -546,11 +546,13 @@ function renderEleves(c, actions){
       <button data-m="photos" class="${eleveViewMode==='photos'?'active':''}">Photos</button>
     </div>
     <button class="btn btn-sm" id="btn-open-trombi" style="margin-left:10px;">📷 Importer trombinoscope</button>
+    <button class="btn btn-sm" id="btn-import-list" style="margin-left:8px;">📋 Importer une liste</button>
     <button class="btn btn-primary" id="btn-add-eleve" style="margin-left:10px;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
       Ajouter un élève</button>`;
   document.getElementById('btn-add-eleve').onclick = openAddEleveModal;
   document.getElementById('btn-open-trombi').onclick = openTrombinoscopeTool;
+  document.getElementById('btn-import-list').onclick = openImportListModal;
   document.getElementById('eleve-view-switch').querySelectorAll('button').forEach(b=>{
     b.onclick = ()=>{ eleveViewMode = b.dataset.m; renderEleves(c, actions); };
   });
@@ -620,6 +622,151 @@ function ensurePdfJs(){
   });
 }
 
+/* ============================================================
+   IMPORT D'UNE LISTE D'ÉLÈVES (coller une liste ou fichier)
+   ============================================================ */
+let importListTab = 'paste';
+let importListParsed = []; // [{nom, prenom, dup}]
+
+function openImportListModal(){
+  importListTab = 'paste';
+  importListParsed = [];
+  showModal(`
+    <h3>Importer une liste d'élèves</h3>
+    <div class="subtabs" style="margin-bottom:14px;">
+      <button class="subtab active" data-ilt="paste">Coller une liste</button>
+      <button class="subtab" data-ilt="file">Importer un fichier</button>
+    </div>
+    <div id="il-body"></div>
+  `);
+  document.querySelectorAll('#generic-modal .subtab').forEach(b=>{
+    b.onclick = ()=>{
+      importListTab = b.dataset.ilt;
+      document.querySelectorAll('#generic-modal .subtab').forEach(x=>x.classList.toggle('active', x===b));
+      renderImportListBody();
+    };
+  });
+  renderImportListBody();
+}
+
+function renderImportListBody(){
+  const body = document.getElementById('il-body');
+  if(importListTab==='paste'){
+    body.innerHTML = `
+      <p class="muted" style="font-size:12px; margin-bottom:8px;">Un élève par ligne. Formats reconnus automatiquement : "Nom, Prénom", "Nom Tab Prénom", ou "Nom Prénom" séparés par un espace.</p>
+      <div class="field"><label>Ordre si pas de virgule/tabulation</label>
+        <select id="il-order"><option value="nomprenom">Nom puis Prénom</option><option value="prenomnom">Prénom puis Nom</option></select>
+      </div>
+      <div class="field"><textarea id="il-paste" style="min-height:160px;" placeholder="Dupont Alice&#10;Martin Léo&#10;Bernard, Chloé"></textarea></div>
+      <button class="btn btn-sm" id="il-preview-btn">Prévisualiser</button>
+      <div id="il-preview" style="margin-top:14px;"></div>
+    `;
+    document.getElementById('il-preview-btn').onclick = ()=>{
+      const order = document.getElementById('il-order').value;
+      const lines = document.getElementById('il-paste').value.split('\n').map(l=>l.trim()).filter(Boolean);
+      importListParsed = lines.map(line=> parseEleveLine(line, order));
+      renderImportListPreview();
+    };
+  } else {
+    body.innerHTML = `
+      <p class="muted" style="font-size:12px; margin-bottom:8px;">Fichier Excel/CSV avec des colonnes Nom et Prénom (en-têtes requis).</p>
+      <div class="field"><input type="file" id="il-file" accept=".xlsx,.xls,.csv"></div>
+      <div id="il-file-error" style="color:var(--danger); font-size:12.5px;"></div>
+      <div id="il-preview" style="margin-top:14px;"></div>
+    `;
+    document.getElementById('il-file').addEventListener('change', (ev)=>{
+      const file = ev.target.files[0];
+      if(!file) return;
+      if(typeof XLSX === 'undefined'){
+        document.getElementById('il-file-error').textContent = "Lecture de fichiers indisponible (connexion internet requise).";
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e)=>{
+        try{
+          const data = new Uint8Array(e.target.result);
+          const wb = XLSX.read(data, {type:'array'});
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:''});
+          const nonEmpty = rows.filter(r=>r.some(c=>String(c).trim()!==''));
+          if(nonEmpty.length<2) throw new Error('empty');
+          const headers = nonEmpty[0].map(h=>normStr(h));
+          const nomIdx = headers.findIndex(h=> h.includes('nom') && !h.includes('prenom'));
+          const prenomIdx = headers.findIndex(h=> h.includes('prenom'));
+          if(nomIdx===-1 || prenomIdx===-1) throw new Error('no headers');
+          importListParsed = nonEmpty.slice(1).map(row=>({
+            nom: String(row[nomIdx]||'').trim(),
+            prenom: String(row[prenomIdx]||'').trim(),
+          })).filter(x=>x.nom || x.prenom);
+          importListParsed.forEach(markDup);
+          renderImportListPreview();
+        }catch(err){
+          document.getElementById('il-file-error').textContent = "Colonnes Nom/Prénom introuvables. Essaie plutôt « Coller une liste ».";
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+}
+
+function parseEleveLine(line, order){
+  let nom='', prenom='';
+  if(line.includes(',')){
+    const [a,b] = line.split(',');
+    nom = (a||'').trim(); prenom = (b||'').trim();
+  } else if(line.includes('\t')){
+    const [a,b] = line.split('\t');
+    nom = (a||'').trim(); prenom = (b||'').trim();
+  } else {
+    const idx = line.indexOf(' ');
+    if(idx===-1){ nom = line.trim(); }
+    else if(order==='prenomnom'){ prenom = line.slice(0,idx).trim(); nom = line.slice(idx+1).trim(); }
+    else { nom = line.slice(0,idx).trim(); prenom = line.slice(idx+1).trim(); }
+  }
+  const item = {nom, prenom};
+  markDup(item);
+  return item;
+}
+function markDup(item){
+  const target = normStr(item.nom+item.prenom);
+  item.dup = state.data.eleves.some(e=> normStr(e.nom+e.prenom)===target);
+}
+
+function renderImportListPreview(){
+  const wrap = document.getElementById('il-preview');
+  if(!importListParsed.length){ wrap.innerHTML = `<p class="muted" style="font-size:12.5px;">Aucune ligne détectée.</p>`; return; }
+  const nbDup = importListParsed.filter(x=>x.dup).length;
+  wrap.innerHTML = `
+    <p class="muted" style="font-size:12px; margin-bottom:8px;">${importListParsed.length} élève(s) détecté(s)${nbDup?`, dont ${nbDup} déjà présent(s) dans la classe (non réimporté(s))`:''}.</p>
+    <div style="max-height:240px; overflow-y:auto; border:1px solid var(--hairline); border-radius:var(--radius-m);">
+      ${importListParsed.map((x,i)=>`
+        <div class="match-row ${x.dup?'no-match':''}">
+          <span>${escHTML(x.prenom)} ${escHTML(x.nom)}${x.dup?' (déjà présent)':''}</span>
+          <span data-remove="${i}" style="color:var(--danger); cursor:pointer; font-size:12px;">Retirer</span>
+        </div>
+      `).join('')}
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+      <button class="btn btn-ghost" id="il-cancel">Annuler</button>
+      <button class="btn btn-primary" id="il-confirm">Importer ${importListParsed.filter(x=>!x.dup).length} élève(s)</button>
+    </div>
+  `;
+  wrap.querySelectorAll('[data-remove]').forEach(link=>{
+    link.addEventListener('click', ()=>{
+      importListParsed.splice(parseInt(link.dataset.remove), 1);
+      renderImportListPreview();
+    });
+  });
+  document.getElementById('il-cancel').onclick = closeModal;
+  document.getElementById('il-confirm').onclick = ()=>{
+    const toAdd = importListParsed.filter(x=> !x.dup && (x.nom || x.prenom));
+    toAdd.forEach(x=> state.data.eleves.push(newEleve(x.nom, x.prenom)));
+    saveNow();
+    closeModal();
+    render();
+  };
+}
+
 function openTrombinoscopeTool(){
   trombiOrigImg = null;
   trombiSelectedEid = '';
@@ -647,6 +794,7 @@ function openTrombinoscopeTool(){
   renderTrombiImportZone();
 }
 function closeTrombinoscopeTool(){
+  if(trombiDragCleanup){ trombiDragCleanup(); trombiDragCleanup = null; }
   document.getElementById('modal-root').innerHTML = '';
   render();
 }
@@ -766,7 +914,10 @@ function renderTrombiFacesList(){
   });
 }
 
+let trombiDragCleanup = null;
+
 function setupTrombiDrag(){
+  if(trombiDragCleanup){ trombiDragCleanup(); trombiDragCleanup = null; }
   const wrap = document.getElementById('trombi-img-wrap');
   const selBox = document.getElementById('trombi-sel-box');
   const display = document.getElementById('trombi-img-display');
@@ -825,11 +976,17 @@ function setupTrombiDrag(){
     renderTrombiFacesList();
   }
   wrap.addEventListener('mousedown', startDrag);
-  wrap.addEventListener('mousemove', moveDrag);
-  wrap.addEventListener('mouseup', endDrag);
+  document.addEventListener('mousemove', moveDrag);
+  document.addEventListener('mouseup', endDrag);
   wrap.addEventListener('touchstart', startDrag, {passive:false});
-  wrap.addEventListener('touchmove', moveDrag, {passive:false});
-  wrap.addEventListener('touchend', endDrag, {passive:false});
+  document.addEventListener('touchmove', moveDrag, {passive:false});
+  document.addEventListener('touchend', endDrag, {passive:false});
+  trombiDragCleanup = ()=>{
+    document.removeEventListener('mousemove', moveDrag);
+    document.removeEventListener('mouseup', endDrag);
+    document.removeEventListener('touchmove', moveDrag, {passive:false});
+    document.removeEventListener('touchend', endDrag, {passive:false});
+  };
 }
 
 function openAddEleveModal(){
